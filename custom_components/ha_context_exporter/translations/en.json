@@ -1,0 +1,21 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "HA Context Exporter",
+        "description": "Create sanitized Home Assistant context exports for support or analysis."
+      }
+    },
+    "abort": {
+      "already_configured": "Only one HA Context Exporter entry is supported."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Export options",
+        "description": "Choose what the generated archive should contain and how aggressive the masking should be."
+      }
+    }
+  }
+}

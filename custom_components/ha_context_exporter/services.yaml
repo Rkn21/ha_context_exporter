@@ -1,0 +1,79 @@
+export_context:
+  name: Export Home Assistant context
+  description: Create a sanitized ZIP export of the current Home Assistant configuration.
+  fields:
+    config_entry_id:
+      name: Config entry ID
+      description: Optional when only one HA Context Exporter entry exists.
+      example: abc123def456
+      selector:
+        text:
+    export_profile:
+      name: Export profile
+      description: Baseline preset used before override options are applied.
+      selector:
+        select:
+          options:
+            - compact
+            - standard
+            - extended
+    output_dir:
+      name: Output directory
+      description: Directory inside /config where the ZIP will be written.
+      example: www/ha_context_exports
+      selector:
+        text:
+    filename_prefix:
+      name: Filename prefix
+      description: Prefix used for the generated ZIP file name.
+      example: ha_context
+      selector:
+        text:
+    include_packages:
+      name: Include packages
+      selector:
+        boolean:
+    include_templates:
+      name: Include templates
+      selector:
+        boolean:
+    include_blueprints:
+      name: Include blueprints
+      selector:
+        boolean:
+    include_dashboards:
+      name: Include dashboards
+      selector:
+        boolean:
+    include_storage:
+      name: Include registries and storage files
+      selector:
+        boolean:
+    include_custom_components:
+      name: Include custom components
+      selector:
+        boolean:
+    include_logs:
+      name: Include logs
+      selector:
+        boolean:
+    include_summary:
+      name: Include generated summary files
+      selector:
+        boolean:
+    redact_network:
+      name: Redact IPs and network endpoints
+      selector:
+        boolean:
+    redact_urls:
+      name: Redact full URLs
+      selector:
+        boolean:
+    redact_location:
+      name: Redact location-like data
+      selector:
+        boolean:
+    create_notification:
+      name: Create persistent notification
+      selector:
+        boolean:

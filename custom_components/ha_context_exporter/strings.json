@@ -1,0 +1,63 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "HA Context Exporter",
+        "description": "Create sanitized Home Assistant context exports for support or analysis.",
+        "data": {
+          "name": "Entry name",
+          "export_profile": "Export profile",
+          "output_dir": "Output directory",
+          "filename_prefix": "Filename prefix",
+          "include_packages": "Include packages",
+          "include_templates": "Include templates",
+          "include_blueprints": "Include blueprints",
+          "include_dashboards": "Include dashboards",
+          "include_storage": "Include registries and storage files",
+          "include_custom_components": "Include custom components",
+          "include_logs": "Include logs",
+          "include_summary": "Include generated summary files",
+          "redact_network": "Redact IPs and network endpoints",
+          "redact_urls": "Redact full URLs",
+          "redact_location": "Redact location-like data",
+          "create_notification": "Create persistent notification"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Only one HA Context Exporter entry is supported."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Export options",
+        "description": "Choose what the generated archive should contain and how aggressive the masking should be.",
+        "data": {
+          "name": "Entry name",
+          "export_profile": "Export profile",
+          "output_dir": "Output directory",
+          "filename_prefix": "Filename prefix",
+          "include_packages": "Include packages",
+          "include_templates": "Include templates",
+          "include_blueprints": "Include blueprints",
+          "include_dashboards": "Include dashboards",
+          "include_storage": "Include registries and storage files",
+          "include_custom_components": "Include custom components",
+          "include_logs": "Include logs",
+          "include_summary": "Include generated summary files",
+          "redact_network": "Redact IPs and network endpoints",
+          "redact_urls": "Redact full URLs",
+          "redact_location": "Redact location-like data",
+          "create_notification": "Create persistent notification"
+        }
+      }
+    }
+  },
+  "services": {
+    "export_context": {
+      "name": "Export Home Assistant context",
+      "description": "Create a sanitized ZIP export of the current Home Assistant configuration."
+    }
+  }
+}

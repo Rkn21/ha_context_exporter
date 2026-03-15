@@ -1,0 +1,21 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Exportateur de contexte Home Assistant",
+        "description": "Crée un export ZIP propre et masqué de la configuration Home Assistant."
+      }
+    },
+    "abort": {
+      "already_configured": "Une seule instance de cet exportateur est prise en charge."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options d'export",
+        "description": "Choisis le niveau de contenu et le niveau de masquage des données sensibles."
+      }
+    }
+  }
+}
