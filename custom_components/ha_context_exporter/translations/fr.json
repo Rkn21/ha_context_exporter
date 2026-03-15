@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Exportateur de contexte Home Assistant",
-        "description": "Cree un export ZIP propre et masque de la configuration Home Assistant.\n\nProfils :\n- compact : fichiers YAML principaux, templates, packages et registres essentiels\n- standard : compact + dashboards et blueprints\n- extended : standard + custom_components"
+        "description": "Cree un export ZIP propre et masque de la configuration Home Assistant.\n\nProfils :\n- compact : fichiers YAML principaux, templates, packages et registres essentiels\n- standard : compact + dashboards et blueprints\n- extended : standard + custom_components, pour un debug plus profond et plus de bruit"
       }
     },
     "abort": {
@@ -14,7 +14,7 @@
     "step": {
       "init": {
         "title": "Options d'export",
-        "description": "Choisis le niveau de contenu et le niveau de masquage des donnees sensibles.\n\nProfils :\n- compact : export leger centre sur la configuration coeur et les registres\n- standard : profil recommande pour la plupart des diagnostics\n- extended : ajoute custom_components pour une analyse plus poussee"
+        "description": "Choisis le niveau de contenu et le niveau de masquage des donnees sensibles.\n\nProfils :\n- compact : export leger centre sur la configuration coeur et les registres\n- standard : profil recommande pour la plupart des diagnostics\n- extended : ajoute custom_components pour une analyse plus poussee et plus de bruit"
       }
     }
   }

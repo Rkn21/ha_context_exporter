@@ -12,9 +12,10 @@ Custom integration for Home Assistant, installable through HACS, that builds a *
 - Manual export through the `ha_context_exporter.export_context` action
 - Sensible export presets: `compact`, `standard`, `extended`
 - Redaction of common secrets, including Tuya Local `local_key`, URLs with credentials, IP addresses, hostnames, and location-like data
+- Optional `privacy_strict` mode to also mask persistent internal identifiers such as `device_id`, `area_id`, `entry_id`, and `unique_id`
 - Writes the ZIP inside your Home Assistant `/config` directory
 - Optional public download path when exporting inside `/config/www/...`
-- Built-in summary files with counts plus helper definitions, entity snapshots, and custom component metadata
+- Built-in summary files with counts plus helper definitions, entity snapshots, automation summaries, and custom component metadata
 
 ## What gets exported
 
@@ -37,6 +38,7 @@ Depending on options:
   - `export_summary.json`
   - `helpers_summary.json`
   - `entity_snapshot.json`
+  - `automation_summary.json`
   - `custom_components_summary.json`
 - optionally `custom_components/`
 
@@ -91,6 +93,7 @@ data:
   include_custom_components: false
   redact_network: true
   redact_urls: false
+  privacy_strict: false
   output_dir: www/ha_context_exports
 ```
 

@@ -25,6 +25,7 @@ from .const import (
     CONF_INCLUDE_SUMMARY,
     CONF_INCLUDE_TEMPLATES,
     CONF_OUTPUT_DIR,
+    CONF_PRIVACY_STRICT,
     CONF_REDACT_LOCATION,
     CONF_REDACT_NETWORK,
     CONF_REDACT_URLS,
@@ -36,6 +37,7 @@ from .const import (
     NETWORK_KEYWORDS,
     PROFILE_DEFAULTS,
     SENSITIVE_KEYWORDS,
+    STRICT_PRIVACY_KEYWORDS,
     STORAGE_FILES,
 )
 
@@ -49,6 +51,7 @@ UUID_RE = re.compile(
 )
 LINE_KEY_VALUE_RE = re.compile(r'^(\s*(?:-\s*)?["\']?[A-Za-z0-9_. -]+["\']?)(\s*:\s*)(.*)$')
 NORMALIZE_KEY_RE = re.compile(r"[^a-z0-9]+")
+INTERNAL_ID_RE = re.compile(r"^[a-f0-9]{8,}$", re.IGNORECASE)
 
 HELPER_DOMAINS = {
     "counter",
@@ -88,6 +91,7 @@ class ExportOptions:
     redact_network: bool
     redact_urls: bool
     redact_location: bool
+    privacy_strict: bool
     create_notification: bool
 
 
@@ -146,6 +150,7 @@ def build_effective_options(
         redact_network=bool(merged[CONF_REDACT_NETWORK]),
         redact_urls=bool(merged[CONF_REDACT_URLS]),
         redact_location=bool(merged[CONF_REDACT_LOCATION]),
+        privacy_strict=bool(merged[CONF_PRIVACY_STRICT]),
         create_notification=bool(merged[CONF_CREATE_NOTIFICATION]),
     )
 
@@ -214,6 +219,8 @@ def _collect_files(config_dir: Path, options: ExportOptions) -> tuple[list[_Prep
     files: list[_PreparedFile] = []
     excluded: list[dict[str, str]] = []
 
+    _record_profile_exclusions(options, excluded)
+
     for relative in CORE_FILES:
         _add_file(config_dir / relative, relative, files, excluded)
 
@@ -240,7 +247,7 @@ def _collect_files(config_dir: Path, options: ExportOptions) -> tuple[list[_Prep
                     if child.is_file() and any(child.name.startswith(prefix) for prefix in DASHBOARD_STORAGE_PREFIXES):
                         _add_file(child, f".storage/{child.name}", files, excluded)
             else:
-                excluded.append({"path": ".storage", "reason": "missing"})
+                _append_excluded(excluded, ".storage", "missing")
 
     if options.include_dashboards:
         _add_file(config_dir / "ui-lovelace.yaml", "ui-lovelace.yaml", files, excluded)
@@ -262,21 +269,21 @@ def _deduplicate(items: list[_PreparedFile]) -> list[_PreparedFile]:
 
 def _add_file(source: Path, archive_name: str, files: list[_PreparedFile], excluded: list[dict[str, str]]) -> None:
     if not source.exists():
-        excluded.append({"path": archive_name, "reason": "missing"})
+        _append_excluded(excluded, archive_name, "missing")
         return
     if source.is_dir():
-        excluded.append({"path": archive_name, "reason": "directory_not_expected"})
+        _append_excluded(excluded, archive_name, "directory_not_expected")
         return
     if source.name == "secrets.yaml":
-        excluded.append({"path": archive_name, "reason": "always_excluded"})
+        _append_excluded(excluded, archive_name, "always_excluded")
         return
     suffix = source.suffix.lower()
     is_storage_file = source.parent.name == ".storage"
     if suffix and suffix not in ALLOWED_TEXT_EXTENSIONS and not is_storage_file:
-        excluded.append({"path": archive_name, "reason": "unsupported_extension"})
+        _append_excluded(excluded, archive_name, "unsupported_extension")
         return
     if not suffix and not is_storage_file and not source.name.startswith("core."):
-        excluded.append({"path": archive_name, "reason": "unsupported_extension"})
+        _append_excluded(excluded, archive_name, "unsupported_extension")
         return
 
     kind = "json" if suffix == ".json" or is_storage_file else "text"
@@ -285,10 +292,10 @@ def _add_file(source: Path, archive_name: str, files: list[_PreparedFile], exclu
 
 def _add_dir(source_dir: Path, archive_root: str, files: list[_PreparedFile], excluded: list[dict[str, str]]) -> None:
     if not source_dir.exists():
-        excluded.append({"path": archive_root, "reason": "missing"})
+        _append_excluded(excluded, archive_root, "missing")
         return
     if not source_dir.is_dir():
-        excluded.append({"path": archive_root, "reason": "file_not_directory"})
+        _append_excluded(excluded, archive_root, "file_not_directory")
         return
 
     for path in sorted(source_dir.rglob("*")):
@@ -298,10 +305,10 @@ def _add_dir(source_dir: Path, archive_root: str, files: list[_PreparedFile], ex
         archive_name = f"{archive_root}/{relative}"
 
         if path.name == "secrets.yaml":
-            excluded.append({"path": archive_name, "reason": "always_excluded"})
+            _append_excluded(excluded, archive_name, "always_excluded")
             continue
         if path.suffix.lower() not in ALLOWED_TEXT_EXTENSIONS and path.parent.name != ".storage":
-            excluded.append({"path": archive_name, "reason": "unsupported_extension"})
+            _append_excluded(excluded, archive_name, "unsupported_extension")
             continue
         kind = "json" if path.suffix.lower() == ".json" or path.parent.name == ".storage" else "text"
         files.append(_PreparedFile(source_path=path, archive_name=archive_name, kind=kind))
@@ -332,6 +339,8 @@ def _redact_object(value: Any, options: ExportOptions, parent_key: str | None = 
             key_lower = str(key).lower()
             if _is_sensitive_key(key_lower):
                 output[key] = "<redacted>"
+            elif options.privacy_strict and _should_strict_redact_key(key_lower, item):
+                output[key] = "<redacted-id>"
             elif options.redact_network and _is_network_key(key_lower):
                 output[key] = "<redacted-network>"
             elif options.redact_location and _is_location_key(key_lower):
@@ -344,6 +353,8 @@ def _redact_object(value: Any, options: ExportOptions, parent_key: str | None = 
     if isinstance(value, str):
         if parent_key and _is_sensitive_key(parent_key):
             return "<redacted>"
+        if parent_key and options.privacy_strict and _should_strict_redact_key(parent_key, value):
+            return "<redacted-id>"
         if parent_key and options.redact_network and _is_network_key(parent_key):
             return "<redacted-network>"
         if parent_key and options.redact_location and _is_location_key(parent_key):
@@ -391,6 +402,8 @@ def _redact_line_based_keys(text: str, options: ExportOptions) -> str:
 
         if _is_sensitive_key(normalized):
             replacement = "<redacted>"
+        elif options.privacy_strict and _should_strict_redact_key(normalized, _value):
+            replacement = "<redacted-id>"
         elif options.redact_network and _is_network_key(normalized):
             replacement = "<redacted-network>"
         elif options.redact_location and _is_location_key(normalized):
@@ -415,6 +428,20 @@ def _is_location_key(key: str) -> bool:
     return _matches_keyword(key, LOCATION_KEYWORDS)
 
 
+def _should_strict_redact_key(key: str, value: Any) -> bool:
+    normalized = _normalize_key(key)
+    if normalized in STRICT_PRIVACY_KEYWORDS:
+        return True
+    if normalized == "id" and isinstance(value, str):
+        return _looks_like_internal_id(value)
+    return False
+
+
+def _looks_like_internal_id(value: str) -> bool:
+    candidate = value.strip().strip('"\'')
+    return bool(INTERNAL_ID_RE.fullmatch(candidate))
+
+
 def _matches_keyword(key: str, keywords: set[str]) -> bool:
     normalized = _normalize_key(key)
     if not normalized:
@@ -437,6 +464,7 @@ def _build_summary(
     registry_context: dict[str, Any],
     helper_summary: dict[str, Any],
     entity_snapshot: dict[str, Any],
+    automation_summary: dict[str, Any],
     custom_components_summary: dict[str, Any] | None,
 ) -> dict[str, Any]:
     entities = registry_context["entities"]
@@ -481,17 +509,21 @@ def _build_summary(
         "integration_domains": dict(sorted(integrations.items(), key=lambda item: (-item[1], item[0]))[:30]),
         "helper_count": helper_summary.get("helper_count", 0),
         "entity_snapshot_count": entity_snapshot.get("entity_count", 0),
+        "automation_summary_count": automation_summary.get("automation_count", 0),
+        "excluded_by_category": _summarize_exclusions(excluded),
         "selected_options": asdict(options),
         "generated_files": [
             "export_summary.json",
             "README_EXPORT.txt",
             "helpers_summary.json",
             "entity_snapshot.json",
+            "automation_summary.json",
         ],
         "recommended_upload_files": [
             "export_summary.json",
             "helpers_summary.json",
             "entity_snapshot.json",
+            "automation_summary.json",
             "configuration.yaml",
             "automations.yaml",
             ".storage/core.entity_registry",
@@ -520,7 +552,8 @@ def _build_generated_files(
     registry_context = _load_registry_context(config_dir)
     entity_snapshot = _build_entity_snapshot(registry_context)
     helper_summary = _build_helper_summary(config_dir, registry_context)
-    custom_components_summary = _build_custom_components_summary(config_dir)
+    automation_summary = _build_automation_summary(config_dir, registry_context)
+    custom_components_summary = _build_custom_components_summary(config_dir, options.include_custom_components)
     summary = _build_summary(
         config_dir,
         options,
@@ -529,6 +562,7 @@ def _build_generated_files(
         registry_context,
         helper_summary,
         entity_snapshot,
+        automation_summary,
         custom_components_summary,
     )
 
@@ -542,6 +576,11 @@ def _build_generated_files(
         ),
         "entity_snapshot.json": json.dumps(
             _redact_object(entity_snapshot, options),
+            indent=2,
+            ensure_ascii=False,
+        ),
+        "automation_summary.json": json.dumps(
+            _redact_object(automation_summary, options),
             indent=2,
             ensure_ascii=False,
         ),
@@ -566,7 +605,7 @@ def _build_readme(summary: dict[str, Any]) -> str:
         f"Devices: {counts.get('devices', 0)}\n"
         f"Areas: {counts.get('areas', 0)}\n"
         f"Integrations: {counts.get('integrations', 0)}\n\n"
-        "Generated helper and entity snapshots are included for faster analysis.\n"
+        "Generated helper, entity and automation summaries are included for faster analysis.\n"
         "The standard profile is usually the best balance for sharing; extended is intentionally much noisier.\n\n"
         "Sensitive values have been masked based on the selected options.\n"
         "Always review the ZIP before sharing it outside your local environment.\n"
@@ -719,6 +758,68 @@ def _build_helper_summary(config_dir: Path, registry_context: dict[str, Any]) ->
     }
 
 
+def _build_automation_summary(config_dir: Path, registry_context: dict[str, Any]) -> dict[str, Any]:
+    automations_path = config_dir / "automations.yaml"
+    if not automations_path.exists():
+        return {
+            "generated_at": datetime.now(UTC).isoformat(),
+            "automation_count": 0,
+            "automations": [],
+            "source": "missing",
+        }
+
+    raw = automations_path.read_text(encoding="utf-8", errors="replace")
+    blocks = _split_top_level_yaml_list(raw)
+    devices_by_id = registry_context["devices_by_id"]
+    areas_by_id = registry_context["areas_by_id"]
+    entities_by_id = {
+        str(entity.get("entity_id")): entity
+        for entity in registry_context["entities"]
+        if entity.get("entity_id")
+    }
+    automations: list[dict[str, Any]] = []
+
+    for index, block in enumerate(blocks, start=1):
+        entity_ids = _extract_yaml_field_values(block, "entity_id")
+        device_ids = _extract_yaml_field_values(block, "device_id")
+        area_ids = _extract_yaml_field_values(block, "area_id")
+        service_calls = _extract_yaml_field_values(block, "service")
+        trigger_platforms = _extract_yaml_field_values(block, "platform")
+
+        automations.append(
+            _compact_dict(
+                {
+                    "index": index,
+                    "id": _extract_yaml_scalar(block, "id"),
+                    "alias": _extract_yaml_scalar(block, "alias"),
+                    "description": _extract_yaml_scalar(block, "description"),
+                    "mode": _extract_yaml_scalar(block, "mode"),
+                    "trigger_platforms": trigger_platforms,
+                    "service_calls": service_calls,
+                    "referenced_entities": [
+                        _resolve_entity_reference(entity_id, entities_by_id, devices_by_id, areas_by_id)
+                        for entity_id in entity_ids
+                    ],
+                    "referenced_devices": [
+                        _resolve_device_reference(device_id, devices_by_id, areas_by_id)
+                        for device_id in device_ids
+                    ],
+                    "referenced_areas": [
+                        _resolve_area_reference(area_id, areas_by_id)
+                        for area_id in area_ids
+                    ],
+                }
+            )
+        )
+
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "automation_count": len(automations),
+        "automations": automations,
+        "source": "automations.yaml",
+    }
+
+
 def _load_helper_definitions(config_dir: Path) -> dict[str, dict[str, Any]]:
     helper_details: dict[str, dict[str, Any]] = {}
     storage_dir = config_dir / ".storage"
@@ -790,7 +891,7 @@ def _resolve_helper_entity_id(domain: str, item: dict[str, Any]) -> str | None:
     return f"{domain}.{_slugify(str(object_id)).lower()}"
 
 
-def _build_custom_components_summary(config_dir: Path) -> dict[str, Any] | None:
+def _build_custom_components_summary(config_dir: Path, code_exported: bool) -> dict[str, Any] | None:
     root = config_dir / "custom_components"
     if not root.exists() or not root.is_dir():
         return None
@@ -822,8 +923,204 @@ def _build_custom_components_summary(config_dir: Path) -> dict[str, Any] | None:
         "generated_at": datetime.now(UTC).isoformat(),
         "component_count": len(components),
         "total_files": total_files,
+        "code_exported": code_exported,
         "components": components,
     }
+
+
+def _record_profile_exclusions(options: ExportOptions, excluded: list[dict[str, str]]) -> None:
+    if not options.include_packages:
+        _append_excluded(excluded, "packages", "disabled_by_profile")
+    if not options.include_templates:
+        _append_excluded(excluded, "templates", "disabled_by_profile")
+    if not options.include_blueprints:
+        _append_excluded(excluded, "blueprints", "disabled_by_profile")
+    if not options.include_custom_components:
+        _append_excluded(excluded, "custom_components", "disabled_by_profile")
+    if not options.include_logs:
+        _append_excluded(excluded, "logs", "disabled_by_profile")
+    if not options.include_storage:
+        _append_excluded(excluded, ".storage", "disabled_by_profile")
+    if not options.include_dashboards:
+        _append_excluded(excluded, "ui-lovelace.yaml", "disabled_by_profile")
+        _append_excluded(excluded, "dashboards", "disabled_by_profile")
+        _append_excluded(excluded, ".storage/lovelace*", "disabled_by_profile")
+
+
+def _append_excluded(excluded: list[dict[str, str]], path: str, reason: str) -> None:
+    excluded.append(
+        {
+            "path": path,
+            "reason": reason,
+            "category": _classify_exclusion_reason(reason),
+        }
+    )
+
+
+def _classify_exclusion_reason(reason: str) -> str:
+    if reason == "disabled_by_profile":
+        return "excluded_by_profile"
+    if reason == "always_excluded":
+        return "excluded_for_safety"
+    if reason == "unsupported_extension":
+        return "unsupported"
+    if reason == "missing":
+        return "missing_expected"
+    return "other"
+
+
+def _summarize_exclusions(excluded: list[dict[str, str]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in excluded:
+        category = str(item.get("category", "other"))
+        counts[category] = counts.get(category, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _split_top_level_yaml_list(raw: str) -> list[str]:
+    blocks: list[list[str]] = []
+    current: list[str] = []
+
+    for line in raw.splitlines():
+        if line.startswith("- "):
+            if current:
+                blocks.append(current)
+            current = [line]
+            continue
+        if current:
+            current.append(line)
+
+    if current:
+        blocks.append(current)
+
+    return ["\n".join(block).strip() for block in blocks if any(part.strip() for part in block)]
+
+
+def _extract_yaml_scalar(block: str, key: str) -> str | None:
+    values = _extract_yaml_field_values(block, key, first_only=True)
+    return values[0] if values else None
+
+
+def _extract_yaml_field_values(block: str, key: str, first_only: bool = False) -> list[str]:
+    pattern = re.compile(rf"^\s*-?\s*{re.escape(key)}\s*:\s*(.*)$")
+    list_pattern = re.compile(r"^\s*-\s*(.+?)\s*$")
+    lines = block.splitlines()
+    values: list[str] = []
+    index = 0
+
+    while index < len(lines):
+        match = pattern.match(lines[index])
+        if match is None:
+            index += 1
+            continue
+
+        raw_value = _strip_yaml_comment(match.group(1).strip())
+        base_indent = len(lines[index]) - len(lines[index].lstrip())
+        if raw_value:
+            values.extend(_split_yaml_scalar_values(raw_value))
+            if first_only and values:
+                return values[:1]
+            index += 1
+            continue
+
+        index += 1
+        while index < len(lines):
+            next_line = lines[index]
+            if not next_line.strip():
+                index += 1
+                continue
+            indent = len(next_line) - len(next_line.lstrip())
+            if indent <= base_indent:
+                break
+            list_match = list_pattern.match(next_line)
+            if list_match is not None:
+                values.extend(_split_yaml_scalar_values(_strip_yaml_comment(list_match.group(1).strip())))
+                if first_only and values:
+                    return values[:1]
+            index += 1
+
+    return _dedupe_strings(values[:1] if first_only else values)
+
+
+def _split_yaml_scalar_values(value: str) -> list[str]:
+    candidate = value.strip()
+    if not candidate:
+        return []
+    if candidate.startswith("[") and candidate.endswith("]"):
+        parts = candidate[1:-1].split(",")
+        return _dedupe_strings([_strip_yaml_quotes(part.strip()) for part in parts if part.strip()])
+    return [_strip_yaml_quotes(candidate)]
+
+
+def _strip_yaml_quotes(value: str) -> str:
+    return value.strip().strip('"\'')
+
+
+def _strip_yaml_comment(value: str) -> str:
+    if " #" in value:
+        value = value.split(" #", 1)[0]
+    return value.strip()
+
+
+def _resolve_entity_reference(
+    entity_id: str,
+    entities_by_id: dict[str, dict[str, Any]],
+    devices_by_id: dict[str, dict[str, Any]],
+    areas_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    entity = entities_by_id.get(entity_id, {})
+    device = devices_by_id.get(str(entity.get("device_id"))) if entity else None
+    area = areas_by_id.get(str(entity.get("area_id"))) if entity else None
+    if area is None and device is not None:
+        area = areas_by_id.get(str(device.get("area_id")))
+    return _compact_dict(
+        {
+            "entity_id": entity_id,
+            "name": _first_non_empty(entity.get("name"), entity.get("original_name")),
+            "device": _first_non_empty(
+                device.get("name_by_user") if device else None,
+                device.get("name") if device else None,
+            ),
+            "area": _first_non_empty(area.get("name") if area else None, area.get("area_id") if area else None),
+        }
+    )
+
+
+def _resolve_device_reference(
+    device_id: str,
+    devices_by_id: dict[str, dict[str, Any]],
+    areas_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    device = devices_by_id.get(device_id, {})
+    area = areas_by_id.get(str(device.get("area_id"))) if device else None
+    return _compact_dict(
+        {
+            "device_id": device_id,
+            "name": _first_non_empty(device.get("name_by_user"), device.get("name")),
+            "area": _first_non_empty(area.get("name") if area else None, area.get("area_id") if area else None),
+        }
+    )
+
+
+def _resolve_area_reference(area_id: str, areas_by_id: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    area = areas_by_id.get(area_id, {})
+    return _compact_dict(
+        {
+            "area_id": area_id,
+            "name": _first_non_empty(area.get("name"), area.get("area_id")),
+        }
+    )
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
 
 
 def _compact_dict(value: dict[str, Any]) -> dict[str, Any]:

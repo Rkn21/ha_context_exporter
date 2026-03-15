@@ -73,6 +73,11 @@ export_context:
       name: Redact location-like data
       selector:
         boolean:
+    privacy_strict:
+      name: Strict privacy mode
+      description: Redact persistent internal identifiers such as device_id, area_id, config entry ids and unique ids.
+      selector:
+        boolean:
     create_notification:
       name: Create persistent notification
       selector:

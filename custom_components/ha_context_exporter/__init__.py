@@ -24,6 +24,7 @@ from .const import (
     CONF_INCLUDE_SUMMARY,
     CONF_INCLUDE_TEMPLATES,
     CONF_OUTPUT_DIR,
+    CONF_PRIVACY_STRICT,
     CONF_REDACT_LOCATION,
     CONF_REDACT_NETWORK,
     CONF_REDACT_URLS,
@@ -54,6 +55,7 @@ EXPORT_SERVICE_SCHEMA = vol.Schema(
         vol.Optional(CONF_REDACT_NETWORK): cv.boolean,
         vol.Optional(CONF_REDACT_URLS): cv.boolean,
         vol.Optional(CONF_REDACT_LOCATION): cv.boolean,
+        vol.Optional(CONF_PRIVACY_STRICT): cv.boolean,
         vol.Optional(CONF_CREATE_NOTIFICATION): cv.boolean,
     }
 )

@@ -28,6 +28,7 @@ CONF_INCLUDE_SUMMARY: Final = "include_summary"
 CONF_REDACT_NETWORK: Final = "redact_network"
 CONF_REDACT_URLS: Final = "redact_urls"
 CONF_REDACT_LOCATION: Final = "redact_location"
+CONF_PRIVACY_STRICT: Final = "privacy_strict"
 CONF_CREATE_NOTIFICATION: Final = "create_notification"
 
 EXPORT_PROFILE_COMPACT: Final = "compact"
@@ -65,6 +66,7 @@ DEFAULT_OPTIONS: Final = {
     CONF_REDACT_NETWORK: True,
     CONF_REDACT_URLS: False,
     CONF_REDACT_LOCATION: True,
+    CONF_PRIVACY_STRICT: False,
     CONF_CREATE_NOTIFICATION: True,
 }
 
@@ -165,6 +167,14 @@ LOCATION_KEYWORDS: Final = {
     "elevation",
     "address",
     "postal_code",
+}
+
+STRICT_PRIVACY_KEYWORDS: Final = {
+    "area_id",
+    "config_entry_id",
+    "device_id",
+    "entry_id",
+    "unique_id",
 }
 
 ALLOWED_TEXT_EXTENSIONS: Final = {

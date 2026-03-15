@@ -20,6 +20,7 @@ from .const import (
     CONF_INCLUDE_SUMMARY,
     CONF_INCLUDE_TEMPLATES,
     CONF_OUTPUT_DIR,
+    CONF_PRIVACY_STRICT,
     CONF_REDACT_LOCATION,
     CONF_REDACT_NETWORK,
     CONF_REDACT_URLS,
@@ -131,6 +132,10 @@ def _build_user_schema(defaults: dict[str, Any]) -> vol.Schema:
                 default=defaults.get(CONF_REDACT_LOCATION, DEFAULT_OPTIONS[CONF_REDACT_LOCATION]),
             ): bool,
             vol.Required(
+                CONF_PRIVACY_STRICT,
+                default=defaults.get(CONF_PRIVACY_STRICT, DEFAULT_OPTIONS[CONF_PRIVACY_STRICT]),
+            ): bool,
+            vol.Required(
                 CONF_CREATE_NOTIFICATION,
                 default=defaults.get(
                     CONF_CREATE_NOTIFICATION,
@@ -202,6 +207,10 @@ def _build_options_schema(defaults: dict[str, Any]) -> vol.Schema:
             vol.Required(
                 CONF_REDACT_LOCATION,
                 default=defaults.get(CONF_REDACT_LOCATION, DEFAULT_OPTIONS[CONF_REDACT_LOCATION]),
+            ): bool,
+            vol.Required(
+                CONF_PRIVACY_STRICT,
+                default=defaults.get(CONF_PRIVACY_STRICT, DEFAULT_OPTIONS[CONF_PRIVACY_STRICT]),
             ): bool,
             vol.Required(
                 CONF_CREATE_NOTIFICATION,
