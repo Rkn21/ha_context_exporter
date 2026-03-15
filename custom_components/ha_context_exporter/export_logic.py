@@ -604,7 +604,7 @@ def _build_readme(summary: dict[str, Any]) -> str:
     return (
         "HA Context Export\n"
         "=================\n\n"
-        "This archive is designed to be uploaded to ChatGPT for Home Assistant context analysis.\n\n"
+        "This archive is designed to be uploaded to an AI assistant for Home Assistant context analysis.\n\n"
         f"Profile: {summary.get('profile')}\n"
         f"Entities: {counts.get('entities', 0)}\n"
         f"Devices: {counts.get('devices', 0)}\n"
