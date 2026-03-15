@@ -10,7 +10,7 @@ export_context:
         text:
     export_profile:
       name: Export profile
-      description: Baseline preset used before override options are applied.
+      description: Baseline preset used before override options are applied. compact focuses on core YAML and registries, standard adds dashboards and blueprints, extended also adds custom_components.
       selector:
         select:
           options:

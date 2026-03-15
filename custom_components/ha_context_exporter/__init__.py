@@ -5,10 +5,9 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.components.persistent_notification import async_create as async_create_notification
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
-from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
@@ -28,12 +27,12 @@ from .const import (
     CONF_REDACT_LOCATION,
     CONF_REDACT_NETWORK,
     CONF_REDACT_URLS,
-    DEFAULT_OPTIONS,
     DOMAIN,
     EXPORT_PROFILES,
+    PLATFORMS,
     SERVICE_EXPORT_CONTEXT,
 )
-from .export_logic import async_export_context, build_effective_options
+from .runtime import async_execute_export, get_runtime_data
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,33 +64,8 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
 
     async def async_handle_export_context(call: ServiceCall) -> ServiceResponse:
         entry = _resolve_entry(hass, call.data.get(CONF_CONFIG_ENTRY_ID))
-        options = build_effective_options(entry.options, call.data)
-        try:
-            result = await async_export_context(hass, options)
-        except ValueError as err:
-            raise ServiceValidationError(str(err)) from err
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.exception("Export failed")
-            raise HomeAssistantError(f"Context export failed: {err}") from err
-
-        runtime_data = hass.data[DOMAIN].setdefault(entry.entry_id, {})
-        runtime_data["last_export"] = result.as_response()
-
-        if options.create_notification:
-            message = (
-                f"Export created: **{result.filename}**\\n\\n"
-                f"Path: `{result.absolute_path}`\\n"
-            )
-            if result.download_url:
-                message += f"Download URL: `{result.download_url}`\\n"
-            async_create_notification(
-                hass,
-                message,
-                title="HA Context Exporter",
-                notification_id=f"{DOMAIN}_{entry.entry_id}",
-            )
-
-        return result.as_response() if call.return_response else None
+        result = await async_execute_export(hass, entry, call.data)
+        return result if call.return_response else None
 
     if not hass.services.has_service(DOMAIN, SERVICE_EXPORT_CONTEXT):
         hass.services.async_register(
@@ -108,15 +82,18 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up a config entry."""
     hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN].setdefault(entry.entry_id, {"last_export": None})
+    get_runtime_data(hass, entry.entry_id)
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
-    return True
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unload_ok:
+        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+    return unload_ok
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from typing import Final
 
+from homeassistant.const import Platform
+
 DOMAIN: Final = "ha_context_exporter"
 NAME: Final = "HA Context Exporter"
 VERSION: Final = "0.1.0"
+
+PLATFORMS: Final = (Platform.BUTTON, Platform.SENSOR)
 
 SERVICE_EXPORT_CONTEXT: Final = "export_context"
 
@@ -33,6 +37,12 @@ EXPORT_PROFILES: Final = {
     EXPORT_PROFILE_COMPACT: "Compact",
     EXPORT_PROFILE_STANDARD: "Standard",
     EXPORT_PROFILE_EXTENDED: "Extended",
+}
+
+EXPORT_PROFILE_DETAILS: Final = {
+    EXPORT_PROFILE_COMPACT: "Core YAML files, templates, packages and essential registries.",
+    EXPORT_PROFILE_STANDARD: "Compact profile plus dashboards and blueprints for broader troubleshooting context.",
+    EXPORT_PROFILE_EXTENDED: "Standard profile plus custom_components for the deepest troubleshooting context.",
 }
 
 DEFAULT_OUTPUT_DIR: Final = "www/ha_context_exports"

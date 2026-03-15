@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "HA Context Exporter",
-        "description": "Create sanitized Home Assistant context exports for support or analysis."
+        "description": "Create sanitized Home Assistant context exports for support or analysis.\n\nProfiles:\n- compact: core YAML files, templates, packages and essential registries\n- standard: compact + dashboards and blueprints\n- extended: standard + custom_components"
       }
     },
     "abort": {
@@ -14,7 +14,7 @@
     "step": {
       "init": {
         "title": "Export options",
-        "description": "Choose what the generated archive should contain and how aggressive the masking should be."
+        "description": "Choose what the generated archive should contain and how aggressive the masking should be.\n\nProfiles:\n- compact: smaller export focused on core config and registries\n- standard: recommended default for most troubleshooting cases\n- extended: includes custom_components for deeper analysis"
       }
     }
   }

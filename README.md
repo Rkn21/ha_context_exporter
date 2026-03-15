@@ -5,6 +5,10 @@ Custom integration for Home Assistant, installable through HACS, that builds a *
 ## Features
 
 - UI-configurable through **Settings > Devices & Services**
+- Direct UI controls through Home Assistant entities:
+  - an **Export context** button to generate a new ZIP
+  - a **Download latest export** button to surface the latest download link in the UI
+  - a **Last export** diagnostic sensor with path, profile and URL metadata
 - Manual export through the `ha_context_exporter.export_context` action
 - Sensible export presets: `compact`, `standard`, `extended`
 - Redaction of common secrets, tokens, URLs with credentials, IP addresses, hostnames, and location-like data
@@ -49,6 +53,20 @@ The integration always excludes `secrets.yaml`.
 
 Configure the export profile and masking rules in the integration options.
 
+After setup, the integration also exposes UI entities you can place on a dashboard or use from the integration page:
+
+- `button.<entry_name>_export_context`
+- `button.<entry_name>_download_latest_export`
+- `sensor.<entry_name>_last_export`
+
+The download button becomes available once an export has been written under `/config/www/...`, for example `www/ha_context_exports`. Pressing it creates a persistent notification with a direct download link to the latest ZIP.
+
+### Export profiles
+
+- `compact`: smallest useful export. Includes core YAML files, templates, packages and essential registry/storage files.
+- `standard`: recommended default. Includes everything from `compact` plus dashboards and blueprints.
+- `extended`: deepest troubleshooting profile. Includes everything from `standard` plus `custom_components/`.
+
 ### From Developer Tools > Actions
 
 Action:
@@ -80,7 +98,6 @@ When `return_response` is enabled in the action tool, the service returns metada
 
 - Review the ZIP before sharing it externally.
 - The masking is intentionally conservative, but no automatic redaction is perfect.
-- Update `manifest.json` URLs and `codeowners` before publishing the repository.
 
 ## Suggested next improvements
 
