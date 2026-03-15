@@ -11,10 +11,10 @@ Custom integration for Home Assistant, installable through HACS, that builds a *
   - a **Last export** diagnostic sensor with path, profile and URL metadata
 - Manual export through the `ha_context_exporter.export_context` action
 - Sensible export presets: `compact`, `standard`, `extended`
-- Redaction of common secrets, tokens, URLs with credentials, IP addresses, hostnames, and location-like data
+- Redaction of common secrets, including Tuya Local `local_key`, URLs with credentials, IP addresses, hostnames, and location-like data
 - Writes the ZIP inside your Home Assistant `/config` directory
 - Optional public download path when exporting inside `/config/www/...`
-- Built-in summary file with counts for entities, devices, helpers, and integrations
+- Built-in summary files with counts plus helper definitions, entity snapshots, and custom component metadata
 
 ## What gets exported
 
@@ -33,6 +33,11 @@ Depending on options:
   - `core.device_registry`
   - `core.area_registry`
   - `core.config_entries`
+- generated summaries:
+  - `export_summary.json`
+  - `helpers_summary.json`
+  - `entity_snapshot.json`
+  - `custom_components_summary.json`
 - optionally `custom_components/`
 
 The integration always excludes `secrets.yaml`.
@@ -67,7 +72,7 @@ If `output_dir` points inside `/config/www/...`, the export metadata also keeps 
 
 - `compact`: smallest useful export. Includes core YAML files, templates, packages and essential registry/storage files.
 - `standard`: recommended default. Includes everything from `compact` plus dashboards and blueprints.
-- `extended`: deepest troubleshooting profile. Includes everything from `standard` plus `custom_components/`.
+- `extended`: deepest troubleshooting profile. Includes everything from `standard` plus full `custom_components/` source code and is much noisier.
 
 ### From Developer Tools > Actions
 
@@ -100,6 +105,7 @@ When `return_response` is enabled in the action tool, the service returns metada
 
 - Review the ZIP before sharing it externally.
 - The masking is intentionally conservative, but no automatic redaction is perfect.
+- `standard` is usually the best profile for sharing; `extended` is mainly for custom integration debugging.
 
 ## Suggested next improvements
 

@@ -43,7 +43,7 @@ EXPORT_PROFILES: Final = {
 EXPORT_PROFILE_DETAILS: Final = {
     EXPORT_PROFILE_COMPACT: "Core YAML files, templates, packages and essential registries.",
     EXPORT_PROFILE_STANDARD: "Compact profile plus dashboards and blueprints for broader troubleshooting context.",
-    EXPORT_PROFILE_EXTENDED: "Standard profile plus custom_components for the deepest troubleshooting context.",
+    EXPORT_PROFILE_EXTENDED: "Standard profile plus full custom_components code for deep integration debugging; this profile is intentionally much noisier.",
 }
 
 DEFAULT_OUTPUT_DIR: Final = "www/ha_context_exports"
@@ -131,6 +131,7 @@ SENSITIVE_KEYWORDS: Final = {
     "password",
     "passwd",
     "secret",
+    "local_key",
     "token",
     "api_key",
     "apikey",

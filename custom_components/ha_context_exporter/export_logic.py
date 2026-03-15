@@ -47,6 +47,29 @@ EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECAS
 UUID_RE = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
 )
+LINE_KEY_VALUE_RE = re.compile(r'^(\s*(?:-\s*)?["\']?[A-Za-z0-9_. -]+["\']?)(\s*:\s*)(.*)$')
+NORMALIZE_KEY_RE = re.compile(r"[^a-z0-9]+")
+
+HELPER_DOMAINS = {
+    "counter",
+    "input_boolean",
+    "input_button",
+    "input_datetime",
+    "input_number",
+    "input_select",
+    "input_text",
+    "schedule",
+    "timer",
+}
+
+LINE_BASED_REDACTION_EXTENSIONS = {
+    ".yaml",
+    ".yml",
+    ".conf",
+    ".ini",
+    ".txt",
+    ".log",
+}
 
 
 @dataclass(slots=True)
@@ -144,12 +167,11 @@ def _export_context_sync(config_dir_str: str, options: ExportOptions) -> ExportR
     zip_path = output_dir / filename
 
     prepared_files, excluded = _collect_files(config_dir, options)
-    summary = _build_summary(config_dir, options, prepared_files, excluded)
+    generated_files = _build_generated_files(config_dir, options, prepared_files, excluded)
 
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        if options.include_summary:
-            archive.writestr("export_summary.json", json.dumps(summary, indent=2, ensure_ascii=False))
-            archive.writestr("README_EXPORT.txt", _build_readme(summary))
+        for archive_name, content in generated_files.items():
+            archive.writestr(archive_name, content)
 
         for prepared in prepared_files:
             _write_prepared_file(archive, prepared, options)
@@ -170,7 +192,7 @@ def _export_context_sync(config_dir_str: str, options: ExportOptions) -> ExportR
         filename=filename,
         absolute_path=str(zip_path),
         download_url=download_url,
-        file_count=len(prepared_files) + (2 if options.include_summary else 0) + 1,
+        file_count=len(prepared_files) + len(generated_files) + 1,
         excluded_count=len(excluded),
         bytes_written=zip_path.stat().st_size,
         profile=options.export_profile,
@@ -248,11 +270,16 @@ def _add_file(source: Path, archive_name: str, files: list[_PreparedFile], exclu
     if source.name == "secrets.yaml":
         excluded.append({"path": archive_name, "reason": "always_excluded"})
         return
-    if source.suffix.lower() and source.suffix.lower() not in ALLOWED_TEXT_EXTENSIONS and not source.name.startswith("core."):
+    suffix = source.suffix.lower()
+    is_storage_file = source.parent.name == ".storage"
+    if suffix and suffix not in ALLOWED_TEXT_EXTENSIONS and not is_storage_file:
+        excluded.append({"path": archive_name, "reason": "unsupported_extension"})
+        return
+    if not suffix and not is_storage_file and not source.name.startswith("core."):
         excluded.append({"path": archive_name, "reason": "unsupported_extension"})
         return
 
-    kind = "json" if source.suffix.lower() == ".json" or source.parent.name == ".storage" else "text"
+    kind = "json" if suffix == ".json" or is_storage_file else "text"
     files.append(_PreparedFile(source_path=source, archive_name=archive_name, kind=kind))
 
 
@@ -285,7 +312,7 @@ def _write_prepared_file(archive: zipfile.ZipFile, prepared: _PreparedFile, opti
     if prepared.kind == "json":
         cleaned = _sanitize_json_text(raw, options)
     else:
-        cleaned = _sanitize_text(raw, options)
+        cleaned = _sanitize_text(raw, options, prepared.source_path.suffix.lower())
     archive.writestr(prepared.archive_name, cleaned)
 
 
@@ -325,7 +352,7 @@ def _redact_object(value: Any, options: ExportOptions, parent_key: str | None = 
     return value
 
 
-def _sanitize_text(raw: str, options: ExportOptions) -> str:
+def _sanitize_text(raw: str, options: ExportOptions, file_extension: str | None = None) -> str:
     text = raw
 
     text = URL_WITH_AUTH_RE.sub(r"\1<redacted-user>:<redacted-pass>@", text)
@@ -341,7 +368,8 @@ def _sanitize_text(raw: str, options: ExportOptions) -> str:
         text = EMAIL_RE.sub("<redacted-email>", text)
 
     text = UUID_RE.sub("<redacted-uuid>", text)
-    text = _redact_line_based_keys(text, options)
+    if file_extension in LINE_BASED_REDACTION_EXTENSIONS:
+        text = _redact_line_based_keys(text, options)
     return text
 
 
@@ -352,7 +380,12 @@ def _redact_line_based_keys(text: str, options: ExportOptions) -> str:
             lines.append(line)
             continue
 
-        key_part, _sep, _value = line.partition(":")
+        match = LINE_KEY_VALUE_RE.match(line)
+        if match is None:
+            lines.append(line)
+            continue
+
+        key_part, separator, _value = match.groups()
         normalized = key_part.strip().strip("\"'").lower().replace(" ", "_")
         replacement: str | None = None
 
@@ -364,22 +397,36 @@ def _redact_line_based_keys(text: str, options: ExportOptions) -> str:
             replacement = "<redacted-location>"
 
         if replacement is not None:
-            lines.append(f"{key_part}: {replacement}")
+            lines.append(f"{key_part}{separator}{replacement}")
         else:
             lines.append(line)
     return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
 
 
 def _is_sensitive_key(key: str) -> bool:
-    return any(token in key for token in SENSITIVE_KEYWORDS)
+    return _matches_keyword(key, SENSITIVE_KEYWORDS)
 
 
 def _is_network_key(key: str) -> bool:
-    return any(token in key for token in NETWORK_KEYWORDS)
+    return _matches_keyword(key, NETWORK_KEYWORDS)
 
 
 def _is_location_key(key: str) -> bool:
-    return any(token in key for token in LOCATION_KEYWORDS)
+    return _matches_keyword(key, LOCATION_KEYWORDS)
+
+
+def _matches_keyword(key: str, keywords: set[str]) -> bool:
+    normalized = _normalize_key(key)
+    if not normalized:
+        return False
+    if normalized in keywords:
+        return True
+    segments = {segment for segment in normalized.split("_") if segment}
+    return any(keyword in segments for keyword in keywords if "_" not in keyword)
+
+
+def _normalize_key(key: str) -> str:
+    return NORMALIZE_KEY_RE.sub("_", key.strip().lower()).strip("_")
 
 
 def _build_summary(
@@ -387,30 +434,18 @@ def _build_summary(
     options: ExportOptions,
     prepared_files: list[_PreparedFile],
     excluded: list[dict[str, str]],
+    registry_context: dict[str, Any],
+    helper_summary: dict[str, Any],
+    entity_snapshot: dict[str, Any],
+    custom_components_summary: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    entity_registry = _load_storage_file(config_dir / ".storage/core.entity_registry")
-    device_registry = _load_storage_file(config_dir / ".storage/core.device_registry")
-    area_registry = _load_storage_file(config_dir / ".storage/core.area_registry")
-    config_entries = _load_storage_file(config_dir / ".storage/core.config_entries")
-
-    entities = entity_registry.get("data", {}).get("entities", []) if isinstance(entity_registry, dict) else []
-    devices = device_registry.get("data", {}).get("devices", []) if isinstance(device_registry, dict) else []
-    areas = area_registry.get("data", {}).get("areas", []) if isinstance(area_registry, dict) else []
-    entries = config_entries.get("data", {}).get("entries", []) if isinstance(config_entries, dict) else []
+    entities = registry_context["entities"]
+    devices = registry_context["devices"]
+    areas = registry_context["areas"]
+    entries = registry_context["entries"]
 
     domains: dict[str, int] = {}
     helpers: dict[str, int] = {}
-    helper_domains = {
-        "input_boolean",
-        "input_button",
-        "input_datetime",
-        "input_number",
-        "input_select",
-        "input_text",
-        "counter",
-        "timer",
-        "schedule",
-    }
 
     for entity in entities:
         entity_id = entity.get("entity_id")
@@ -418,7 +453,7 @@ def _build_summary(
             continue
         domain = entity_id.split(".", 1)[0]
         domains[domain] = domains.get(domain, 0) + 1
-        if domain in helper_domains:
+        if domain in HELPER_DOMAINS:
             helpers[domain] = helpers.get(domain, 0) + 1
 
     integrations: dict[str, int] = {}
@@ -426,10 +461,9 @@ def _build_summary(
         domain = entry.get("domain", "unknown")
         integrations[domain] = integrations.get(domain, 0) + 1
 
-    return {
+    summary = {
         "generated_at": datetime.now(UTC).isoformat(),
         "profile": options.export_profile,
-        "config_dir": str(config_dir),
         "included_files": len(prepared_files),
         "excluded_items": len(excluded),
         "top_entity_domains": dict(sorted(domains.items(), key=lambda item: (-item[1], item[0]))[:20]),
@@ -445,9 +479,19 @@ def _build_summary(
             "binary_sensors": domains.get("binary_sensor", 0),
         },
         "integration_domains": dict(sorted(integrations.items(), key=lambda item: (-item[1], item[0]))[:30]),
+        "helper_count": helper_summary.get("helper_count", 0),
+        "entity_snapshot_count": entity_snapshot.get("entity_count", 0),
         "selected_options": asdict(options),
+        "generated_files": [
+            "export_summary.json",
+            "README_EXPORT.txt",
+            "helpers_summary.json",
+            "entity_snapshot.json",
+        ],
         "recommended_upload_files": [
             "export_summary.json",
+            "helpers_summary.json",
+            "entity_snapshot.json",
             "configuration.yaml",
             "automations.yaml",
             ".storage/core.entity_registry",
@@ -455,6 +499,60 @@ def _build_summary(
             ".storage/core.config_entries",
         ],
     }
+    if custom_components_summary is not None:
+        summary["custom_components"] = {
+            "component_count": custom_components_summary.get("component_count", 0),
+            "total_files": custom_components_summary.get("total_files", 0),
+        }
+        summary["generated_files"].append("custom_components_summary.json")
+    return summary
+
+
+def _build_generated_files(
+    config_dir: Path,
+    options: ExportOptions,
+    prepared_files: list[_PreparedFile],
+    excluded: list[dict[str, str]],
+) -> dict[str, str]:
+    if not options.include_summary:
+        return {}
+
+    registry_context = _load_registry_context(config_dir)
+    entity_snapshot = _build_entity_snapshot(registry_context)
+    helper_summary = _build_helper_summary(config_dir, registry_context)
+    custom_components_summary = _build_custom_components_summary(config_dir)
+    summary = _build_summary(
+        config_dir,
+        options,
+        prepared_files,
+        excluded,
+        registry_context,
+        helper_summary,
+        entity_snapshot,
+        custom_components_summary,
+    )
+
+    generated = {
+        "export_summary.json": json.dumps(_redact_object(summary, options), indent=2, ensure_ascii=False),
+        "README_EXPORT.txt": _build_readme(summary),
+        "helpers_summary.json": json.dumps(
+            _redact_object(helper_summary, options),
+            indent=2,
+            ensure_ascii=False,
+        ),
+        "entity_snapshot.json": json.dumps(
+            _redact_object(entity_snapshot, options),
+            indent=2,
+            ensure_ascii=False,
+        ),
+    }
+    if custom_components_summary is not None:
+        generated["custom_components_summary.json"] = json.dumps(
+            _redact_object(custom_components_summary, options),
+            indent=2,
+            ensure_ascii=False,
+        )
+    return generated
 
 
 def _build_readme(summary: dict[str, Any]) -> str:
@@ -468,9 +566,282 @@ def _build_readme(summary: dict[str, Any]) -> str:
         f"Devices: {counts.get('devices', 0)}\n"
         f"Areas: {counts.get('areas', 0)}\n"
         f"Integrations: {counts.get('integrations', 0)}\n\n"
+        "Generated helper and entity snapshots are included for faster analysis.\n"
+        "The standard profile is usually the best balance for sharing; extended is intentionally much noisier.\n\n"
         "Sensitive values have been masked based on the selected options.\n"
         "Always review the ZIP before sharing it outside your local environment.\n"
     )
+
+
+def _load_registry_context(config_dir: Path) -> dict[str, Any]:
+    entity_registry = _load_storage_file(config_dir / ".storage/core.entity_registry")
+    device_registry = _load_storage_file(config_dir / ".storage/core.device_registry")
+    area_registry = _load_storage_file(config_dir / ".storage/core.area_registry")
+    config_entries = _load_storage_file(config_dir / ".storage/core.config_entries")
+
+    entities = entity_registry.get("data", {}).get("entities", []) if isinstance(entity_registry, dict) else []
+    devices = device_registry.get("data", {}).get("devices", []) if isinstance(device_registry, dict) else []
+    areas = area_registry.get("data", {}).get("areas", []) if isinstance(area_registry, dict) else []
+    entries = config_entries.get("data", {}).get("entries", []) if isinstance(config_entries, dict) else []
+
+    return {
+        "entities": entities,
+        "devices": devices,
+        "areas": areas,
+        "entries": entries,
+        "devices_by_id": {str(device.get("id")): device for device in devices if device.get("id")},
+        "areas_by_id": {str(area.get("area_id")): area for area in areas if area.get("area_id")},
+        "entries_by_id": {str(entry.get("entry_id")): entry for entry in entries if entry.get("entry_id")},
+    }
+
+
+def _build_entity_snapshot(registry_context: dict[str, Any]) -> dict[str, Any]:
+    devices_by_id = registry_context["devices_by_id"]
+    areas_by_id = registry_context["areas_by_id"]
+    entries_by_id = registry_context["entries_by_id"]
+    entities: list[dict[str, Any]] = []
+
+    for entity in sorted(registry_context["entities"], key=lambda item: str(item.get("entity_id", ""))):
+        entity_id = entity.get("entity_id")
+        if not entity_id or "." not in entity_id:
+            continue
+
+        domain = entity_id.split(".", 1)[0]
+        device = devices_by_id.get(str(entity.get("device_id")))
+        area = areas_by_id.get(str(entity.get("area_id")))
+        if area is None and device is not None:
+            area = areas_by_id.get(str(device.get("area_id")))
+
+        config_entry = entries_by_id.get(str(entity.get("config_entry_id")))
+        if config_entry is None and device is not None:
+            for entry_id in device.get("config_entries", []):
+                config_entry = entries_by_id.get(str(entry_id))
+                if config_entry is not None:
+                    break
+
+        entities.append(
+            _compact_dict(
+                {
+                    "entity_id": entity_id,
+                    "domain": domain,
+                    "name": _first_non_empty(entity.get("name"), entity.get("original_name")),
+                    "device_class": _first_non_empty(
+                        entity.get("device_class"),
+                        entity.get("original_device_class"),
+                    ),
+                    "state_class": _first_non_empty(
+                        entity.get("state_class"),
+                        entity.get("original_state_class"),
+                    ),
+                    "unit_of_measurement": _first_non_empty(
+                        entity.get("unit_of_measurement"),
+                        entity.get("original_unit_of_measurement"),
+                    ),
+                    "entity_category": entity.get("entity_category"),
+                    "disabled_by": entity.get("disabled_by"),
+                    "hidden_by": entity.get("hidden_by"),
+                    "area": _first_non_empty(area.get("name") if area else None, area.get("area_id") if area else None),
+                    "device": _first_non_empty(
+                        device.get("name_by_user") if device else None,
+                        device.get("name") if device else None,
+                    ),
+                    "integration": _first_non_empty(
+                        config_entry.get("domain") if config_entry else None,
+                        entity.get("platform"),
+                    ),
+                    "integration_title": config_entry.get("title") if config_entry else None,
+                }
+            )
+        )
+
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "entity_count": len(entities),
+        "entities": entities,
+    }
+
+
+def _build_helper_summary(config_dir: Path, registry_context: dict[str, Any]) -> dict[str, Any]:
+    helper_details = _load_helper_definitions(config_dir)
+    devices_by_id = registry_context["devices_by_id"]
+    areas_by_id = registry_context["areas_by_id"]
+    entries_by_id = registry_context["entries_by_id"]
+    helpers: list[dict[str, Any]] = []
+    by_domain: dict[str, int] = {}
+
+    for entity in sorted(registry_context["entities"], key=lambda item: str(item.get("entity_id", ""))):
+        entity_id = entity.get("entity_id")
+        if not entity_id or "." not in entity_id:
+            continue
+        domain = entity_id.split(".", 1)[0]
+        if domain not in HELPER_DOMAINS:
+            continue
+
+        by_domain[domain] = by_domain.get(domain, 0) + 1
+        details = helper_details.get(entity_id, {})
+        device = devices_by_id.get(str(entity.get("device_id")))
+        area = areas_by_id.get(str(entity.get("area_id")))
+        if area is None and device is not None:
+            area = areas_by_id.get(str(device.get("area_id")))
+
+        config_entry = entries_by_id.get(str(entity.get("config_entry_id")))
+        if config_entry is None and device is not None:
+            for entry_id in device.get("config_entries", []):
+                config_entry = entries_by_id.get(str(entry_id))
+                if config_entry is not None:
+                    break
+
+        helpers.append(
+            _compact_dict(
+                {
+                    "entity_id": entity_id,
+                    "domain": domain,
+                    "name": _first_non_empty(entity.get("name"), entity.get("original_name"), details.get("name")),
+                    "area": _first_non_empty(area.get("name") if area else None, area.get("area_id") if area else None),
+                    "device": _first_non_empty(
+                        device.get("name_by_user") if device else None,
+                        device.get("name") if device else None,
+                    ),
+                    "integration": _first_non_empty(
+                        config_entry.get("domain") if config_entry else None,
+                        entity.get("platform"),
+                    ),
+                    **details,
+                }
+            )
+        )
+
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "helper_count": len(helpers),
+        "by_domain": dict(sorted(by_domain.items())),
+        "helpers": helpers,
+    }
+
+
+def _load_helper_definitions(config_dir: Path) -> dict[str, dict[str, Any]]:
+    helper_details: dict[str, dict[str, Any]] = {}
+    storage_dir = config_dir / ".storage"
+
+    for domain in sorted(HELPER_DOMAINS):
+        raw_items = _extract_storage_items(_load_storage_file(storage_dir / domain), domain)
+        for item in raw_items:
+            entity_id = _resolve_helper_entity_id(domain, item)
+            if not entity_id:
+                continue
+            helper_details[entity_id] = _compact_dict(
+                {
+                    "name": item.get("name"),
+                    "icon": item.get("icon"),
+                    "initial": item.get("initial"),
+                    "restore": item.get("restore"),
+                    "editable": item.get("editable"),
+                    "min": _first_non_empty(item.get("min"), item.get("minimum")),
+                    "max": _first_non_empty(item.get("max"), item.get("maximum")),
+                    "step": item.get("step"),
+                    "mode": item.get("mode"),
+                    "options": item.get("options"),
+                    "unit_of_measurement": _first_non_empty(
+                        item.get("unit_of_measurement"),
+                        item.get("unit"),
+                    ),
+                    "has_date": item.get("has_date"),
+                    "has_time": item.get("has_time"),
+                    "pattern": item.get("pattern"),
+                    "duration": item.get("duration"),
+                }
+            )
+
+    return helper_details
+
+
+def _extract_storage_items(data: dict[str, Any], domain: str) -> list[dict[str, Any]]:
+    candidates: list[Any] = []
+    containers = [data]
+    data_section = data.get("data") if isinstance(data, dict) else None
+    if isinstance(data_section, dict):
+        containers.append(data_section)
+
+    for container in containers:
+        if isinstance(container, list):
+            candidates.append(container)
+            continue
+        if not isinstance(container, dict):
+            continue
+        for key in ("items", "entries", domain, "helpers"):
+            value = container.get(key)
+            if isinstance(value, list):
+                candidates.append(value)
+
+    for candidate in candidates:
+        if candidate and all(isinstance(item, dict) for item in candidate):
+            return candidate
+    return []
+
+
+def _resolve_helper_entity_id(domain: str, item: dict[str, Any]) -> str | None:
+    entity_id = item.get("entity_id")
+    if isinstance(entity_id, str) and entity_id:
+        return entity_id
+
+    object_id = _first_non_empty(item.get("id"), item.get("object_id"), item.get("slug"), item.get("name"))
+    if not object_id:
+        return None
+    return f"{domain}.{_slugify(str(object_id)).lower()}"
+
+
+def _build_custom_components_summary(config_dir: Path) -> dict[str, Any] | None:
+    root = config_dir / "custom_components"
+    if not root.exists() or not root.is_dir():
+        return None
+
+    components: list[dict[str, Any]] = []
+    total_files = 0
+    for manifest_path in sorted(root.glob("*/manifest.json")):
+        component_dir = manifest_path.parent
+        manifest = _load_storage_file(manifest_path)
+        file_count = sum(1 for path in component_dir.rglob("*") if path.is_file())
+        total_files += file_count
+        components.append(
+            _compact_dict(
+                {
+                    "domain": component_dir.name,
+                    "name": manifest.get("name"),
+                    "version": manifest.get("version"),
+                    "documentation": manifest.get("documentation"),
+                    "issue_tracker": manifest.get("issue_tracker"),
+                    "requirements": manifest.get("requirements"),
+                    "dependencies": manifest.get("dependencies"),
+                    "codeowners": manifest.get("codeowners"),
+                    "file_count": file_count,
+                }
+            )
+        )
+
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "component_count": len(components),
+        "total_files": total_files,
+        "components": components,
+    }
+
+
+def _compact_dict(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: item
+        for key, item in value.items()
+        if item is not None and item != "" and item != [] and item != {}
+    }
+
+
+def _first_non_empty(*values: Any) -> Any:
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str) and not value:
+            continue
+        return value
+    return None
 
 
 def _load_storage_file(path: Path) -> dict[str, Any]:
