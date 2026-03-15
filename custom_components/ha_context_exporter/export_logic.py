@@ -279,10 +279,11 @@ def _add_file(source: Path, archive_name: str, files: list[_PreparedFile], exclu
         return
     suffix = source.suffix.lower()
     is_storage_file = source.parent.name == ".storage"
-    if suffix and suffix not in ALLOWED_TEXT_EXTENSIONS and not is_storage_file:
+    is_home_assistant_log = source.name.startswith("home-assistant.log")
+    if suffix and suffix not in ALLOWED_TEXT_EXTENSIONS and not is_storage_file and not is_home_assistant_log:
         _append_excluded(excluded, archive_name, "unsupported_extension")
         return
-    if not suffix and not is_storage_file and not source.name.startswith("core."):
+    if not suffix and not is_storage_file and not source.name.startswith("core.") and not is_home_assistant_log:
         _append_excluded(excluded, archive_name, "unsupported_extension")
         return
 
@@ -307,7 +308,11 @@ def _add_dir(source_dir: Path, archive_root: str, files: list[_PreparedFile], ex
         if path.name == "secrets.yaml":
             _append_excluded(excluded, archive_name, "always_excluded")
             continue
-        if path.suffix.lower() not in ALLOWED_TEXT_EXTENSIONS and path.parent.name != ".storage":
+        if (
+            path.suffix.lower() not in ALLOWED_TEXT_EXTENSIONS
+            and path.parent.name != ".storage"
+            and not path.name.startswith("home-assistant.log")
+        ):
             _append_excluded(excluded, archive_name, "unsupported_extension")
             continue
         kind = "json" if path.suffix.lower() == ".json" or path.parent.name == ".storage" else "text"
@@ -798,6 +803,24 @@ def _build_automation_summary(config_dir: Path, registry_context: dict[str, Any]
             section_keys=("action", "actions"),
             summary_keys=("service", "action", "entity_id", "device_id", "scene", "delay"),
         )
+        trigger_summary = _resolve_automation_section_references(
+            trigger_summary,
+            entities_by_id,
+            devices_by_id,
+            areas_by_id,
+        )
+        condition_summary = _resolve_automation_section_references(
+            condition_summary,
+            entities_by_id,
+            devices_by_id,
+            areas_by_id,
+        )
+        action_summary = _resolve_automation_section_references(
+            action_summary,
+            entities_by_id,
+            devices_by_id,
+            areas_by_id,
+        )
         service_calls = _dedupe_strings(
             [
                 *action_summary.get("service_calls", []),
@@ -847,8 +870,11 @@ def _build_automation_summary(config_dir: Path, registry_context: dict[str, Any]
                     "description": _extract_yaml_scalar(block, "description"),
                     "mode": _extract_yaml_scalar(block, "mode"),
                     "trigger_platforms": trigger_platforms,
+                    "triggers": trigger_summary.get("entries", []),
                     "trigger_summary": _compact_dict(trigger_summary),
+                    "conditions": condition_summary.get("entries", []),
                     "condition_summary": _compact_dict(condition_summary),
+                    "actions": action_summary.get("entries", []),
                     "action_summary": _compact_dict(action_summary),
                     "service_calls": service_calls,
                     "referenced_entities": resolved_entities,
@@ -1092,6 +1118,40 @@ def _summarize_automation_section(
     if area_ids:
         summary["referenced_areas"] = [{"area_id": area_id} for area_id in area_ids]
     return summary
+
+
+def _resolve_automation_section_references(
+    summary: dict[str, Any],
+    entities_by_id: dict[str, dict[str, Any]],
+    devices_by_id: dict[str, dict[str, Any]],
+    areas_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    if not summary:
+        return {}
+
+    resolved = dict(summary)
+    resolved["referenced_entities"] = _dedupe_object_list(
+        [
+            _resolve_entity_reference(item.get("entity_id", ""), entities_by_id, devices_by_id, areas_by_id)
+            for item in summary.get("referenced_entities", [])
+            if item.get("entity_id")
+        ]
+    )
+    resolved["referenced_devices"] = _dedupe_object_list(
+        [
+            _resolve_device_reference(item.get("device_id", ""), devices_by_id, areas_by_id)
+            for item in summary.get("referenced_devices", [])
+            if item.get("device_id")
+        ]
+    )
+    resolved["referenced_areas"] = _dedupe_object_list(
+        [
+            _resolve_area_reference(item.get("area_id", ""), areas_by_id)
+            for item in summary.get("referenced_areas", [])
+            if item.get("area_id")
+        ]
+    )
+    return _compact_dict(resolved)
 
 
 def _extract_yaml_section(block: str, section_keys: tuple[str, ...]) -> str:
