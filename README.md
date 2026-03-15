@@ -8,7 +8,7 @@ Custom integration for Home Assistant, installable through HACS, that builds a *
 - Direct UI controls through Home Assistant entities:
   - an **Export context** button to generate a new ZIP
   - a **Download latest export** button to surface the latest download link in the UI
-  - a **Last export** diagnostic sensor with path, profile and URL metadata
+  - a **Last export** diagnostic sensor with file, size and profile metadata
 - Manual export through the `ha_context_exporter.export_context` action
 - Sensible export presets: `compact`, `standard`, `extended`
 - Redaction of common secrets, including Tuya Local `local_key`, URLs with credentials, IP addresses, hostnames, and location-like data
@@ -68,7 +68,7 @@ After setup, the integration also exposes UI entities you can place on a dashboa
 
 The download button becomes available after the first export. Pressing it creates a persistent notification with a direct signed download link to the latest ZIP.
 
-If `output_dir` points inside `/config/www/...`, the export metadata also keeps a secondary `public_download_url` that can be shared locally as `/local/...`.
+If `output_dir` points inside `/config/www/...`, the export result also keeps a secondary `public_download_url` that can be shared locally as `/local/...`.
 
 ### Export profiles
 
@@ -99,10 +99,12 @@ data:
 
 When `return_response` is enabled in the action tool, the service returns metadata such as:
 
-- `absolute_path`
+- `filename`
 - `download_url`
 - `file_count`
 - `bytes_written`
+
+Additional local-only metadata may also be present for internal download handling. Signed URLs are meant for local use and are not exposed as sensor attributes.
 
 ## Important notes
 

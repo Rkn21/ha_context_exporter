@@ -234,7 +234,7 @@ def _collect_files(config_dir: Path, options: ExportOptions) -> tuple[list[_Prep
         _add_dir(config_dir / "custom_components", "custom_components", files, excluded)
     if options.include_logs:
         _add_dir(config_dir / "logs", "logs", files, excluded)
-        _add_file(config_dir / "home-assistant.log", "home-assistant.log", files, excluded)
+        _add_optional_log_files(config_dir, files, excluded)
 
     if options.include_storage:
         for relative in STORAGE_FILES:
@@ -783,8 +783,60 @@ def _build_automation_summary(config_dir: Path, registry_context: dict[str, Any]
         entity_ids = _extract_yaml_field_values(block, "entity_id")
         device_ids = _extract_yaml_field_values(block, "device_id")
         area_ids = _extract_yaml_field_values(block, "area_id")
-        service_calls = _extract_yaml_field_values(block, "service")
-        trigger_platforms = _extract_yaml_field_values(block, "platform")
+        trigger_summary = _summarize_automation_section(
+            block,
+            section_keys=("trigger", "triggers"),
+            summary_keys=("platform", "entity_id", "device_id", "event_type", "topic", "at"),
+        )
+        condition_summary = _summarize_automation_section(
+            block,
+            section_keys=("condition", "conditions"),
+            summary_keys=("condition", "entity_id", "device_id", "state", "above", "below"),
+        )
+        action_summary = _summarize_automation_section(
+            block,
+            section_keys=("action", "actions"),
+            summary_keys=("service", "action", "entity_id", "device_id", "scene", "delay"),
+        )
+        service_calls = _dedupe_strings(
+            [
+                *action_summary.get("service_calls", []),
+                *_extract_yaml_field_values(block, "service"),
+            ]
+        )
+        trigger_platforms = _dedupe_strings(
+            [
+                *trigger_summary.get("platforms", []),
+                *_extract_yaml_field_values(block, "platform"),
+            ]
+        )
+        resolved_entities = _dedupe_object_list(
+            [
+                _resolve_entity_reference(entity_id, entities_by_id, devices_by_id, areas_by_id)
+                for entity_id in entity_ids
+            ]
+            + trigger_summary.get("referenced_entities", [])
+            + condition_summary.get("referenced_entities", [])
+            + action_summary.get("referenced_entities", [])
+        )
+        resolved_devices = _dedupe_object_list(
+            [
+                _resolve_device_reference(device_id, devices_by_id, areas_by_id)
+                for device_id in device_ids
+            ]
+            + trigger_summary.get("referenced_devices", [])
+            + condition_summary.get("referenced_devices", [])
+            + action_summary.get("referenced_devices", [])
+        )
+        resolved_areas = _dedupe_object_list(
+            [
+                _resolve_area_reference(area_id, areas_by_id)
+                for area_id in area_ids
+            ]
+            + trigger_summary.get("referenced_areas", [])
+            + condition_summary.get("referenced_areas", [])
+            + action_summary.get("referenced_areas", [])
+        )
 
         automations.append(
             _compact_dict(
@@ -795,19 +847,13 @@ def _build_automation_summary(config_dir: Path, registry_context: dict[str, Any]
                     "description": _extract_yaml_scalar(block, "description"),
                     "mode": _extract_yaml_scalar(block, "mode"),
                     "trigger_platforms": trigger_platforms,
+                    "trigger_summary": _compact_dict(trigger_summary),
+                    "condition_summary": _compact_dict(condition_summary),
+                    "action_summary": _compact_dict(action_summary),
                     "service_calls": service_calls,
-                    "referenced_entities": [
-                        _resolve_entity_reference(entity_id, entities_by_id, devices_by_id, areas_by_id)
-                        for entity_id in entity_ids
-                    ],
-                    "referenced_devices": [
-                        _resolve_device_reference(device_id, devices_by_id, areas_by_id)
-                        for device_id in device_ids
-                    ],
-                    "referenced_areas": [
-                        _resolve_area_reference(area_id, areas_by_id)
-                        for area_id in area_ids
-                    ],
+                    "referenced_entities": resolved_entities,
+                    "referenced_devices": resolved_devices,
+                    "referenced_areas": resolved_areas,
                 }
             )
         )
@@ -947,6 +993,27 @@ def _record_profile_exclusions(options: ExportOptions, excluded: list[dict[str, 
         _append_excluded(excluded, ".storage/lovelace*", "disabled_by_profile")
 
 
+def _add_optional_log_files(
+    config_dir: Path,
+    files: list[_PreparedFile],
+    excluded: list[dict[str, str]],
+) -> None:
+    candidates = [
+        "home-assistant.log",
+        "home-assistant.log.1",
+        "home-assistant.log.fault",
+    ]
+    found_any = False
+    for relative in candidates:
+        source = config_dir / relative
+        if source.exists() and source.is_file():
+            _add_file(source, relative, files, excluded)
+            found_any = True
+
+    if not found_any:
+        _append_excluded(excluded, "home-assistant.log*", "missing")
+
+
 def _append_excluded(excluded: list[dict[str, str]], path: str, reason: str) -> None:
     excluded.append(
         {
@@ -994,6 +1061,94 @@ def _split_top_level_yaml_list(raw: str) -> list[str]:
         blocks.append(current)
 
     return ["\n".join(block).strip() for block in blocks if any(part.strip() for part in block)]
+
+
+def _summarize_automation_section(
+    block: str,
+    section_keys: tuple[str, ...],
+    summary_keys: tuple[str, ...],
+) -> dict[str, Any]:
+    section_text = _extract_yaml_section(block, section_keys)
+    if not section_text:
+        return {}
+
+    entity_ids = _extract_yaml_field_values(section_text, "entity_id")
+    device_ids = _extract_yaml_field_values(section_text, "device_id")
+    area_ids = _extract_yaml_field_values(section_text, "area_id")
+    summary: dict[str, Any] = {
+        "entries": _extract_yaml_section_entries(section_text, summary_keys),
+    }
+    if "platform" in summary_keys:
+        summary["platforms"] = _extract_yaml_field_values(section_text, "platform")
+    if "service" in summary_keys or "action" in summary_keys:
+        summary["service_calls"] = _dedupe_strings(
+            _extract_yaml_field_values(section_text, "service")
+            + _extract_yaml_field_values(section_text, "action")
+        )
+    if entity_ids:
+        summary["referenced_entities"] = [{"entity_id": entity_id} for entity_id in entity_ids]
+    if device_ids:
+        summary["referenced_devices"] = [{"device_id": device_id} for device_id in device_ids]
+    if area_ids:
+        summary["referenced_areas"] = [{"area_id": area_id} for area_id in area_ids]
+    return summary
+
+
+def _extract_yaml_section(block: str, section_keys: tuple[str, ...]) -> str:
+    lines = block.splitlines()
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        for key in section_keys:
+            if not stripped.startswith(f"{key}:"):
+                continue
+
+            base_indent = len(line) - len(line.lstrip())
+            section_lines = [line]
+            for next_line in lines[index + 1 :]:
+                if not next_line.strip():
+                    section_lines.append(next_line)
+                    continue
+                indent = len(next_line) - len(next_line.lstrip())
+                if indent <= base_indent:
+                    break
+                section_lines.append(next_line)
+            return "\n".join(section_lines)
+    return ""
+
+
+def _extract_yaml_section_entries(section_text: str, summary_keys: tuple[str, ...]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    lines = section_text.splitlines()
+    current: list[str] = []
+
+    for line in lines[1:]:
+        stripped = line.strip()
+        if stripped.startswith("- ") and current:
+            entries.append(_summarize_yaml_entry(current, summary_keys))
+            current = [line]
+            continue
+        if stripped.startswith("- "):
+            current = [line]
+            continue
+        if current:
+            current.append(line)
+
+    if current:
+        entries.append(_summarize_yaml_entry(current, summary_keys))
+
+    if not entries:
+        entries.append(_summarize_yaml_entry(lines, summary_keys))
+    return [entry for entry in entries if entry]
+
+
+def _summarize_yaml_entry(lines: list[str], summary_keys: tuple[str, ...]) -> dict[str, Any]:
+    block = "\n".join(lines)
+    summary: dict[str, Any] = {}
+    for key in summary_keys:
+        values = _extract_yaml_field_values(block, key)
+        if values:
+            summary[key] = values[0] if len(values) == 1 else values
+    return _compact_dict(summary)
 
 
 def _extract_yaml_scalar(block: str, key: str) -> str | None:
@@ -1076,7 +1231,7 @@ def _resolve_entity_reference(
     return _compact_dict(
         {
             "entity_id": entity_id,
-            "name": _first_non_empty(entity.get("name"), entity.get("original_name")),
+            "name": _first_non_empty(entity.get("name"), entity.get("original_name"), entity_id),
             "device": _first_non_empty(
                 device.get("name_by_user") if device else None,
                 device.get("name") if device else None,
@@ -1120,6 +1275,21 @@ def _dedupe_strings(values: list[str]) -> list[str]:
             continue
         seen.add(value)
         result.append(value)
+    return result
+
+
+def _dedupe_object_list(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for value in values:
+        compacted = _compact_dict(value)
+        if not compacted:
+            continue
+        signature = json.dumps(compacted, sort_keys=True, ensure_ascii=False)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        result.append(compacted)
     return result
 
 

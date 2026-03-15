@@ -6,7 +6,7 @@ from homeassistant.const import Platform
 
 DOMAIN: Final = "ha_context_exporter"
 NAME: Final = "HA Context Exporter"
-VERSION: Final = "0.1.0"
+VERSION: Final = "0.2.0"
 
 PLATFORMS: Final = (Platform.BUTTON, Platform.SENSOR)
 

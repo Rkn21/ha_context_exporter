@@ -9,6 +9,8 @@ from .const import DOMAIN
 TO_REDACT = {
     "absolute_path",
     "download_url",
+    "public_download_url",
+    "download_token",
 }
 
 
