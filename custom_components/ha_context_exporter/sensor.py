@@ -53,6 +53,7 @@ class HAContextExporterLastExportSensor(HAContextExporterBaseEntity, SensorEntit
             "filename": last_export.get("filename"),
             "absolute_path": last_export.get("absolute_path"),
             "download_url": last_export.get("download_url"),
+            "public_download_url": last_export.get("public_download_url"),
             "file_count": last_export.get("file_count"),
             "excluded_count": last_export.get("excluded_count"),
             "bytes_written": last_export.get("bytes_written"),

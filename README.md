@@ -59,7 +59,9 @@ After setup, the integration also exposes UI entities you can place on a dashboa
 - `button.<entry_name>_download_latest_export`
 - `sensor.<entry_name>_last_export`
 
-The download button becomes available once an export has been written under `/config/www/...`, for example `www/ha_context_exports`. Pressing it creates a persistent notification with a direct download link to the latest ZIP.
+The download button becomes available after the first export. Pressing it creates a persistent notification with a direct authenticated download link to the latest ZIP.
+
+If `output_dir` points inside `/config/www/...`, the export metadata also keeps a secondary `public_download_url` that can be shared locally as `/local/...`.
 
 ### Export profiles
 

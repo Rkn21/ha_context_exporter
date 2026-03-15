@@ -11,6 +11,7 @@ VERSION: Final = "0.1.0"
 PLATFORMS: Final = (Platform.BUTTON, Platform.SENSOR)
 
 SERVICE_EXPORT_CONTEXT: Final = "export_context"
+DOWNLOAD_URL_BASE: Final = "/api/ha_context_exporter/download"
 
 CONF_CONFIG_ENTRY_ID: Final = "config_entry_id"
 CONF_EXPORT_PROFILE: Final = "export_profile"

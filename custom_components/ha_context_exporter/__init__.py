@@ -32,6 +32,7 @@ from .const import (
     PLATFORMS,
     SERVICE_EXPORT_CONTEXT,
 )
+from .http import HAContextExporterDownloadView
 from .runtime import async_execute_export, get_runtime_data
 
 _LOGGER = logging.getLogger(__name__)
@@ -61,6 +62,7 @@ EXPORT_SERVICE_SCHEMA = vol.Schema(
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     """Set up the integration domain and register services."""
     hass.data.setdefault(DOMAIN, {})
+    hass.http.register_view(HAContextExporterDownloadView(hass))
 
     async def async_handle_export_context(call: ServiceCall) -> ServiceResponse:
         entry = _resolve_entry(hass, call.data.get(CONF_CONFIG_ENTRY_ID))

@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from .const import DOMAIN, EXPORT_PROFILE_DETAILS
+from .const import DOMAIN, DOWNLOAD_URL_BASE, EXPORT_PROFILE_DETAILS
 from .export_logic import async_export_context, build_effective_options
 
 _LOGGER = logging.getLogger(__name__)
@@ -43,6 +43,8 @@ async def async_execute_export(
         raise HomeAssistantError(f"Context export failed: {err}") from err
 
     result_data = result.as_response()
+    result_data["public_download_url"] = result_data.get("download_url")
+    result_data["download_url"] = get_entry_download_url(entry.entry_id)
     runtime_data = get_runtime_data(hass, entry.entry_id)
     runtime_data["last_export"] = result_data
     async_dispatcher_send(hass, get_entry_update_signal(entry.entry_id))
@@ -105,3 +107,8 @@ def _build_download_notification_message(result: Mapping[str, Any]) -> str:
         f"Path: `{result.get('absolute_path', 'n/a')}`\n"
         f"Profile: `{result.get('profile', 'unknown')}`\n"
     )
+
+
+def get_entry_download_url(entry_id: str) -> str:
+    """Build the authenticated download URL for a config entry."""
+    return f"{DOWNLOAD_URL_BASE}/{entry_id}"
