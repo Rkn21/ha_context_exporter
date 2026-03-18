@@ -593,6 +593,7 @@ def _build_summary(
     helper_summary: dict[str, Any],
     entity_snapshot: dict[str, Any],
     automation_summary: dict[str, Any],
+    hacs_inventory: dict[str, Any] | None,
     custom_components_summary: dict[str, Any] | None,
 ) -> dict[str, Any]:
     entities = registry_context["entities"]
@@ -667,6 +668,15 @@ def _build_summary(
             "total_files": custom_components_summary.get("total_files", 0),
         }
         summary["generated_files"].append("custom_components_summary.json")
+    if hacs_inventory is not None:
+        summary["hacs"] = {
+            "repository_count": hacs_inventory.get("repository_count", 0),
+            "installed_count": hacs_inventory.get("installed_count", 0),
+            "categories": hacs_inventory.get("categories", {}),
+            "source_files": hacs_inventory.get("source_files", []),
+        }
+        summary["generated_files"].append("hacs_inventory.json")
+        summary["recommended_upload_files"].append("hacs_inventory.json")
     return summary
 
 
@@ -717,6 +727,7 @@ def _build_generated_files(
     entity_snapshot = _build_entity_snapshot(registry_context, live_entity_states)
     helper_summary = _build_helper_summary(config_dir, registry_context, live_entity_states)
     automation_summary = _build_automation_summary(config_dir, registry_context)
+    hacs_inventory = _build_hacs_inventory(config_dir)
     custom_components_summary = _build_custom_components_summary(config_dir, options.include_custom_components)
     summary = _build_summary(
         config_dir,
@@ -727,6 +738,7 @@ def _build_generated_files(
         helper_summary,
         entity_snapshot,
         automation_summary,
+        hacs_inventory,
         custom_components_summary,
     )
     archive_index = _build_archive_index(prepared_files, summary, excluded)
@@ -739,6 +751,10 @@ def _build_generated_files(
         "entity_snapshot.json": _dump_json_payload(_redact_object(entity_snapshot, options)),
         "automation_summary.json": _dump_json_payload(_redact_object(automation_summary, options)),
     }
+    if hacs_inventory is not None:
+        generated["hacs_inventory.json"] = _dump_json_payload(
+            _redact_object(hacs_inventory, options)
+        )
     if custom_components_summary is not None:
         generated["custom_components_summary.json"] = _dump_json_payload(
             _redact_object(custom_components_summary, options)
@@ -1180,6 +1196,171 @@ def _build_custom_components_summary(config_dir: Path, code_exported: bool) -> d
         "code_exported": code_exported,
         "components": components,
     }
+
+
+def _build_hacs_inventory(config_dir: Path) -> dict[str, Any] | None:
+    storage_dir = config_dir / ".storage"
+    if not storage_dir.exists() or not storage_dir.is_dir():
+        return None
+
+    hacs_files = sorted(path for path in storage_dir.glob("hacs*") if path.is_file())
+    if not hacs_files:
+        return None
+
+    repositories: list[dict[str, Any]] = []
+    categories: dict[str, int] = {}
+    seen: set[str] = set()
+
+    for path in hacs_files:
+        payload = _load_storage_file(path)
+        for candidate in _extract_hacs_repositories(payload):
+            normalized = _normalize_hacs_repository(candidate, path.name)
+            if not normalized:
+                continue
+            signature = json.dumps(normalized, sort_keys=True, ensure_ascii=False)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            repositories.append(normalized)
+            category = str(normalized.get("category", "unknown"))
+            categories[category] = categories.get(category, 0) + 1
+
+    repositories.sort(
+        key=lambda item: (
+            str(item.get("category", "")),
+            str(item.get("full_name", item.get("name", ""))).lower(),
+        )
+    )
+
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "source": "hacs_storage",
+        "source_files": [path.name for path in hacs_files],
+        "repository_count": len(repositories),
+        "installed_count": sum(1 for repository in repositories if repository.get("installed") is True),
+        "categories": dict(sorted(categories.items())),
+        "repositories": repositories,
+    }
+
+
+def _extract_hacs_repositories(payload: Any) -> list[dict[str, Any]]:
+    repositories: list[dict[str, Any]] = []
+    seen_ids: set[int] = set()
+    stack: list[Any] = [payload]
+
+    while stack:
+        current = stack.pop()
+        current_id = id(current)
+        if current_id in seen_ids:
+            continue
+        seen_ids.add(current_id)
+
+        if isinstance(current, dict):
+            if _looks_like_hacs_repository(current):
+                repositories.append(current)
+            stack.extend(current.values())
+            continue
+
+        if isinstance(current, list):
+            stack.extend(current)
+
+    return repositories
+
+
+def _looks_like_hacs_repository(candidate: Mapping[str, Any]) -> bool:
+    keys = {str(key).lower() for key in candidate}
+    if not keys:
+        return False
+
+    if "full_name" in keys or "repository_full_name" in keys:
+        return True
+
+    strong_markers = {
+        "category",
+        "installed",
+        "version_installed",
+        "selected_tag",
+        "repository",
+        "repository_id",
+    }
+    return len(keys & strong_markers) >= 2
+
+
+def _normalize_hacs_repository(candidate: Mapping[str, Any], source_file: str) -> dict[str, Any]:
+    full_name = _first_non_empty(
+        candidate.get("full_name"),
+        candidate.get("repository_full_name"),
+        candidate.get("repository"),
+    )
+    repository_id = _first_non_empty(candidate.get("id"), candidate.get("repository_id"))
+    category = _first_non_empty(
+        candidate.get("category"),
+        candidate.get("repository_type"),
+        candidate.get("type"),
+    )
+    name = _first_non_empty(candidate.get("name"), _derive_hacs_name(full_name))
+    if not any((full_name, repository_id, name)):
+        return {}
+
+    installed = _coerce_bool(
+        _first_non_empty(candidate.get("installed"), candidate.get("downloaded"), candidate.get("is_installed"))
+    )
+    pending_update = _coerce_bool(
+        _first_non_empty(candidate.get("pending_update"), candidate.get("has_pending_update"))
+    )
+
+    return _compact_dict(
+        {
+            "id": repository_id,
+            "name": name,
+            "full_name": full_name,
+            "category": category,
+            "installed": installed,
+            "pending_update": pending_update,
+            "version_installed": _first_non_empty(
+                candidate.get("version_installed"),
+                candidate.get("installed_version"),
+            ),
+            "version_available": _first_non_empty(
+                candidate.get("version_available"),
+                candidate.get("available_version"),
+                candidate.get("last_version"),
+            ),
+            "selected_tag": candidate.get("selected_tag"),
+            "default_branch": candidate.get("default_branch"),
+            "domain": candidate.get("domain"),
+            "documentation": candidate.get("documentation"),
+            "authors": _normalize_hacs_authors(candidate.get("authors")),
+            "source_file": source_file,
+        }
+    )
+
+
+def _derive_hacs_name(full_name: Any) -> str | None:
+    if not isinstance(full_name, str) or "/" not in full_name:
+        return None
+    return full_name.rsplit("/", 1)[-1]
+
+
+def _normalize_hacs_authors(value: Any) -> list[str] | None:
+    if isinstance(value, list):
+        authors = [str(item) for item in value if item]
+        return authors or None
+    if isinstance(value, str) and value:
+        return [value]
+    return None
+
+
+def _coerce_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "yes", "1", "installed", "downloaded"}:
+            return True
+        if lowered in {"false", "no", "0", "not_installed"}:
+            return False
+    return None
 
 
 def _record_profile_exclusions(options: ExportOptions, excluded: list[dict[str, str]]) -> None:

@@ -16,6 +16,7 @@ Custom integration for Home Assistant, installable through HACS, that builds a *
 - Writes the ZIP inside your Home Assistant `/config` directory
 - Optional public download path when exporting inside `/config/www/...`
 - Built-in summary files with counts plus helper definitions, entity snapshots, live values at export time, automation summaries, and custom component metadata
+- Built-in summary files now also include a dedicated HACS inventory derived from HACS storage data when available
 - Adds a root-level `file_index.json` so external tools can discover the archive structure without unpack heuristics
 
 ## What gets exported
@@ -41,6 +42,7 @@ Depending on options:
   - `helpers_summary.json`
   - `entity_snapshot.json`
   - `automation_summary.json`
+  - `hacs_inventory.json`
   - `custom_components_summary.json`
 - optionally `custom_components/`
 
@@ -51,6 +53,8 @@ The generated summaries now also include runtime information captured at the exa
 - available parameter names exposed by the entity
 - selectable options such as `options`, `preset_modes`, `hvac_modes`, etc.
 - range metadata such as `min`, `max`, `step`, `min_temp`, `max_temp`
+
+When HACS is installed and its storage files are present, `hacs_inventory.json` adds a repository-level inventory with category, installed state, versions, source file, and related metadata extracted from `.storage/hacs*`.
 
 The integration always excludes `secrets.yaml`.
 
