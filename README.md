@@ -56,6 +56,8 @@ The generated summaries now also include runtime information captured at the exa
 
 When HACS is installed and its storage files are present, `hacs_inventory.json` adds a repository-level inventory with category, installed state, versions, source file, and related metadata extracted from `.storage/hacs*`.
 
+To reduce stale data, generated summaries are now built from entities that are actually active at export time, and exported core registry files are pruned to avoid keeping obvious traces of deleted entities, devices, and areas.
+
 The integration always excludes `secrets.yaml`.
 
 ## Installation with HACS

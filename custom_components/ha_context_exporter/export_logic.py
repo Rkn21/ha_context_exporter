@@ -221,6 +221,7 @@ def _export_context_sync(
     safe_prefix = _slugify(options.filename_prefix or "ha_context")
     filename = f"{safe_prefix}_{timestamp}.zip"
     zip_path = output_dir / filename
+    active_entity_ids = set(live_entity_states)
 
     prepared_files, excluded = _collect_files(config_dir, options)
     generated_files = _build_generated_files(
@@ -229,13 +230,19 @@ def _export_context_sync(
         prepared_files,
         excluded,
         live_entity_states,
+        active_entity_ids,
     )
+    storage_overrides = _build_filtered_storage_overrides(config_dir, options, active_entity_ids)
 
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for archive_name, content in generated_files.items():
             archive.writestr(archive_name, content)
 
         for prepared in prepared_files:
+            override = storage_overrides.get(prepared.archive_name)
+            if override is not None:
+                archive.writestr(prepared.archive_name, override)
+                continue
             _write_prepared_file(archive, prepared, options)
 
         archive.writestr(
@@ -719,11 +726,12 @@ def _build_generated_files(
     prepared_files: list[_PreparedFile],
     excluded: list[dict[str, str]],
     live_entity_states: dict[str, dict[str, Any]],
+    active_entity_ids: set[str],
 ) -> dict[str, str]:
     if not options.include_summary:
         return {}
 
-    registry_context = _load_registry_context(config_dir)
+    registry_context = _load_registry_context(config_dir, active_entity_ids)
     entity_snapshot = _build_entity_snapshot(registry_context, live_entity_states)
     helper_summary = _build_helper_summary(config_dir, registry_context, live_entity_states)
     automation_summary = _build_automation_summary(config_dir, registry_context)
@@ -780,18 +788,65 @@ def _build_readme(summary: dict[str, Any]) -> str:
         "Sensitive values have been masked based on the selected options.\n"
         "Always review the ZIP before sharing it outside your local environment.\n"
     )
-
-
-def _load_registry_context(config_dir: Path) -> dict[str, Any]:
+def _load_registry_context(
+    config_dir: Path,
+    active_entity_ids: set[str] | None = None,
+) -> dict[str, Any]:
     entity_registry = _load_storage_file(config_dir / ".storage/core.entity_registry")
     device_registry = _load_storage_file(config_dir / ".storage/core.device_registry")
     area_registry = _load_storage_file(config_dir / ".storage/core.area_registry")
     config_entries = _load_storage_file(config_dir / ".storage/core.config_entries")
 
+    return _build_registry_context(
+        entity_registry,
+        device_registry,
+        area_registry,
+        config_entries,
+        active_entity_ids,
+    )
+
+
+def _build_registry_context(
+    entity_registry: dict[str, Any],
+    device_registry: dict[str, Any],
+    area_registry: dict[str, Any],
+    config_entries: dict[str, Any],
+    active_entity_ids: set[str] | None = None,
+) -> dict[str, Any]:
     entities = entity_registry.get("data", {}).get("entities", []) if isinstance(entity_registry, dict) else []
     devices = device_registry.get("data", {}).get("devices", []) if isinstance(device_registry, dict) else []
     areas = area_registry.get("data", {}).get("areas", []) if isinstance(area_registry, dict) else []
     entries = config_entries.get("data", {}).get("entries", []) if isinstance(config_entries, dict) else []
+
+    if active_entity_ids is not None:
+        entities = [
+            entity
+            for entity in entities
+            if isinstance(entity.get("entity_id"), str) and entity.get("entity_id") in active_entity_ids
+        ]
+
+        referenced_device_ids = {
+            str(entity.get("device_id"))
+            for entity in entities
+            if entity.get("device_id")
+        }
+        referenced_area_ids = {
+            str(entity.get("area_id"))
+            for entity in entities
+            if entity.get("area_id")
+        }
+
+        filtered_devices: list[dict[str, Any]] = []
+        for device in devices:
+            device_id = device.get("id")
+            if not device_id or str(device_id) not in referenced_device_ids:
+                continue
+            filtered_devices.append(device)
+            if device.get("area_id"):
+                referenced_area_ids.add(str(device.get("area_id")))
+
+        devices = filtered_devices
+        areas = [area for area in areas if area.get("area_id") and str(area.get("area_id")) in referenced_area_ids]
 
     return {
         "entities": entities,
@@ -1647,6 +1702,8 @@ def _resolve_entity_reference(
     areas_by_id: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     entity = entities_by_id.get(entity_id, {})
+    if not entity:
+        return {}
     device = devices_by_id.get(str(entity.get("device_id"))) if entity else None
     area = areas_by_id.get(str(entity.get("area_id"))) if entity else None
     if area is None and device is not None:
@@ -1670,6 +1727,8 @@ def _resolve_device_reference(
     areas_by_id: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     device = devices_by_id.get(device_id, {})
+    if not device:
+        return {}
     area = areas_by_id.get(str(device.get("area_id"))) if device else None
     return _compact_dict(
         {
@@ -1682,12 +1741,61 @@ def _resolve_device_reference(
 
 def _resolve_area_reference(area_id: str, areas_by_id: dict[str, dict[str, Any]]) -> dict[str, Any]:
     area = areas_by_id.get(area_id, {})
+    if not area:
+        return {}
     return _compact_dict(
         {
             "area_id": area_id,
             "name": _first_non_empty(area.get("name"), area.get("area_id")),
         }
     )
+
+
+def _build_filtered_storage_overrides(
+    config_dir: Path,
+    options: ExportOptions,
+    active_entity_ids: set[str],
+) -> dict[str, str]:
+    if not options.include_storage:
+        return {}
+
+    entity_registry = _load_storage_file(config_dir / ".storage/core.entity_registry")
+    device_registry = _load_storage_file(config_dir / ".storage/core.device_registry")
+    area_registry = _load_storage_file(config_dir / ".storage/core.area_registry")
+    config_entries = _load_storage_file(config_dir / ".storage/core.config_entries")
+    registry_context = _build_registry_context(
+        entity_registry,
+        device_registry,
+        area_registry,
+        config_entries,
+        active_entity_ids,
+    )
+
+    overrides: dict[str, str] = {}
+    storage_payloads = {
+        ".storage/core.entity_registry": _replace_storage_items(entity_registry, "entities", registry_context["entities"]),
+        ".storage/core.device_registry": _replace_storage_items(device_registry, "devices", registry_context["devices"]),
+        ".storage/core.area_registry": _replace_storage_items(area_registry, "areas", registry_context["areas"]),
+    }
+
+    for archive_name, payload in storage_payloads.items():
+        if payload:
+            overrides[archive_name] = _dump_json_payload(_redact_object(payload, options))
+    return overrides
+
+
+def _replace_storage_items(payload: dict[str, Any], key: str, items: list[dict[str, Any]]) -> dict[str, Any]:
+    if not payload:
+        return {}
+    updated = dict(payload)
+    data_section = updated.get("data")
+    if not isinstance(data_section, dict):
+        data_section = {}
+    else:
+        data_section = dict(data_section)
+    data_section[key] = items
+    updated["data"] = data_section
+    return updated
 
 
 def _dedupe_strings(values: list[str]) -> list[str]:
