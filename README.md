@@ -15,7 +15,7 @@ Custom integration for Home Assistant, installable through HACS, that builds a *
 - Optional `privacy_strict` mode to also mask persistent internal identifiers such as `device_id`, `area_id`, `entry_id`, and `unique_id`
 - Writes the ZIP inside your Home Assistant `/config` directory
 - Optional public download path when exporting inside `/config/www/...`
-- Built-in summary files with counts plus helper definitions, entity snapshots, automation summaries, and custom component metadata
+- Built-in summary files with counts plus helper definitions, entity snapshots, live values at export time, automation summaries, and custom component metadata
 
 ## What gets exported
 
@@ -41,6 +41,14 @@ Depending on options:
   - `automation_summary.json`
   - `custom_components_summary.json`
 - optionally `custom_components/`
+
+The generated summaries now also include runtime information captured at the exact moment of export:
+
+- current entity value/state
+- current entity attributes
+- available parameter names exposed by the entity
+- selectable options such as `options`, `preset_modes`, `hvac_modes`, etc.
+- range metadata such as `min`, `max`, `step`, `min_temp`, `max_temp`
 
 The integration always excludes `secrets.yaml`.
 
@@ -111,6 +119,8 @@ Additional local-only metadata may also be present for internal download handlin
 - Review the ZIP before sharing it externally.
 - The masking is intentionally conservative, but no automatic redaction is perfect.
 - `standard` is usually the best profile for sharing; `extended` is mainly for custom integration debugging.
+
+`entity_snapshot.json` is the main file to inspect if you want the real values present during export. `helpers_summary.json` also includes the current value and available options for helper entities when Home Assistant exposes them in state attributes.
 
 ## Suggested next improvements
 

@@ -9,7 +9,7 @@ import re
 from typing import Any, Mapping
 import zipfile
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, State
 
 from .const import (
     ALLOWED_TEXT_EXTENSIONS,
@@ -63,6 +63,47 @@ HELPER_DOMAINS = {
     "input_text",
     "schedule",
     "timer",
+}
+
+LIVE_PARAMETER_KEYS = {
+    "device_class",
+    "duration",
+    "editable",
+    "effect_list",
+    "fan_modes",
+    "has_date",
+    "has_time",
+    "hvac_modes",
+    "max",
+    "max_temp",
+    "min",
+    "min_temp",
+    "mode",
+    "options",
+    "pattern",
+    "precision",
+    "preset_modes",
+    "source_list",
+    "sound_mode_list",
+    "state_class",
+    "step",
+    "supported_features",
+    "swing_horizontal_modes",
+    "swing_modes",
+    "target_temp_step",
+    "unit_of_measurement",
+}
+
+LIVE_OPTION_KEYS = {
+    "effect_list",
+    "fan_modes",
+    "hvac_modes",
+    "options",
+    "preset_modes",
+    "source_list",
+    "sound_mode_list",
+    "swing_horizontal_modes",
+    "swing_modes",
 }
 
 LINE_BASED_REDACTION_EXTENSIONS = {
@@ -157,10 +198,20 @@ def build_effective_options(
 
 async def async_export_context(hass: HomeAssistant, options: ExportOptions) -> ExportResult:
     """Run the blocking export in an executor."""
-    return await hass.async_add_executor_job(_export_context_sync, hass.config.path(), options)
+    live_entity_states = _capture_live_entity_states(hass)
+    return await hass.async_add_executor_job(
+        _export_context_sync,
+        hass.config.path(),
+        options,
+        live_entity_states,
+    )
 
 
-def _export_context_sync(config_dir_str: str, options: ExportOptions) -> ExportResult:
+def _export_context_sync(
+    config_dir_str: str,
+    options: ExportOptions,
+    live_entity_states: dict[str, dict[str, Any]],
+) -> ExportResult:
     config_dir = Path(config_dir_str).resolve()
     output_dir = _resolve_output_dir(config_dir, options.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -172,7 +223,13 @@ def _export_context_sync(config_dir_str: str, options: ExportOptions) -> ExportR
     zip_path = output_dir / filename
 
     prepared_files, excluded = _collect_files(config_dir, options)
-    generated_files = _build_generated_files(config_dir, options, prepared_files, excluded)
+    generated_files = _build_generated_files(
+        config_dir,
+        options,
+        prepared_files,
+        excluded,
+        live_entity_states,
+    )
 
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for archive_name, content in generated_files.items():
@@ -461,6 +518,48 @@ def _normalize_key(key: str) -> str:
     return NORMALIZE_KEY_RE.sub("_", key.strip().lower()).strip("_")
 
 
+def _capture_live_entity_states(hass: HomeAssistant) -> dict[str, dict[str, Any]]:
+    return {
+        state.entity_id: _build_live_state_snapshot(state)
+        for state in hass.states.async_all()
+        if state.entity_id and "." in state.entity_id
+    }
+
+
+def _build_live_state_snapshot(state: State) -> dict[str, Any]:
+    attributes = dict(state.attributes)
+    return _compact_dict(
+        {
+            "current_value": state.state,
+            "current_attributes": _compact_dict(attributes),
+            "available_parameters": sorted(attributes),
+            "available_options": _extract_available_options(attributes),
+            "parameter_details": _extract_parameter_details(attributes),
+            "last_changed": state.last_changed.isoformat(),
+            "last_updated": state.last_updated.isoformat(),
+        }
+    )
+
+
+def _extract_available_options(attributes: Mapping[str, Any]) -> dict[str, list[Any]]:
+    options: dict[str, list[Any]] = {}
+    for key in sorted(LIVE_OPTION_KEYS):
+        value = attributes.get(key)
+        if isinstance(value, list) and value:
+            options[key] = value
+    return options
+
+
+def _extract_parameter_details(attributes: Mapping[str, Any]) -> dict[str, Any]:
+    return _compact_dict(
+        {
+            key: attributes.get(key)
+            for key in sorted(LIVE_PARAMETER_KEYS)
+            if key in attributes
+        }
+    )
+
+
 def _build_summary(
     config_dir: Path,
     options: ExportOptions,
@@ -550,13 +649,14 @@ def _build_generated_files(
     options: ExportOptions,
     prepared_files: list[_PreparedFile],
     excluded: list[dict[str, str]],
+    live_entity_states: dict[str, dict[str, Any]],
 ) -> dict[str, str]:
     if not options.include_summary:
         return {}
 
     registry_context = _load_registry_context(config_dir)
-    entity_snapshot = _build_entity_snapshot(registry_context)
-    helper_summary = _build_helper_summary(config_dir, registry_context)
+    entity_snapshot = _build_entity_snapshot(registry_context, live_entity_states)
+    helper_summary = _build_helper_summary(config_dir, registry_context, live_entity_states)
     automation_summary = _build_automation_summary(config_dir, registry_context)
     custom_components_summary = _build_custom_components_summary(config_dir, options.include_custom_components)
     summary = _build_summary(
@@ -639,16 +739,27 @@ def _load_registry_context(config_dir: Path) -> dict[str, Any]:
     }
 
 
-def _build_entity_snapshot(registry_context: dict[str, Any]) -> dict[str, Any]:
+def _build_entity_snapshot(
+    registry_context: dict[str, Any],
+    live_entity_states: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
     devices_by_id = registry_context["devices_by_id"]
     areas_by_id = registry_context["areas_by_id"]
     entries_by_id = registry_context["entries_by_id"]
+    entities_by_id = {
+        str(entity.get("entity_id")): entity
+        for entity in registry_context["entities"]
+        if entity.get("entity_id")
+    }
     entities: list[dict[str, Any]] = []
 
-    for entity in sorted(registry_context["entities"], key=lambda item: str(item.get("entity_id", ""))):
-        entity_id = entity.get("entity_id")
+    for entity_id in sorted(set(entities_by_id) | set(live_entity_states)):
         if not entity_id or "." not in entity_id:
             continue
+
+        entity = entities_by_id.get(entity_id, {})
+        live_state = live_entity_states.get(entity_id, {})
+        live_attributes = live_state.get("current_attributes", {})
 
         domain = entity_id.split(".", 1)[0]
         device = devices_by_id.get(str(entity.get("device_id")))
@@ -668,18 +779,25 @@ def _build_entity_snapshot(registry_context: dict[str, Any]) -> dict[str, Any]:
                 {
                     "entity_id": entity_id,
                     "domain": domain,
-                    "name": _first_non_empty(entity.get("name"), entity.get("original_name")),
+                    "name": _first_non_empty(
+                        entity.get("name"),
+                        entity.get("original_name"),
+                        live_attributes.get("friendly_name") if isinstance(live_attributes, dict) else None,
+                    ),
                     "device_class": _first_non_empty(
                         entity.get("device_class"),
                         entity.get("original_device_class"),
+                        live_attributes.get("device_class") if isinstance(live_attributes, dict) else None,
                     ),
                     "state_class": _first_non_empty(
                         entity.get("state_class"),
                         entity.get("original_state_class"),
+                        live_attributes.get("state_class") if isinstance(live_attributes, dict) else None,
                     ),
                     "unit_of_measurement": _first_non_empty(
                         entity.get("unit_of_measurement"),
                         entity.get("original_unit_of_measurement"),
+                        live_attributes.get("unit_of_measurement") if isinstance(live_attributes, dict) else None,
                     ),
                     "entity_category": entity.get("entity_category"),
                     "disabled_by": entity.get("disabled_by"),
@@ -694,6 +812,7 @@ def _build_entity_snapshot(registry_context: dict[str, Any]) -> dict[str, Any]:
                         entity.get("platform"),
                     ),
                     "integration_title": config_entry.get("title") if config_entry else None,
+                    **live_state,
                 }
             )
         )
@@ -701,11 +820,17 @@ def _build_entity_snapshot(registry_context: dict[str, Any]) -> dict[str, Any]:
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "entity_count": len(entities),
+        "registered_entity_count": len(entities_by_id),
+        "live_entity_count": len(live_entity_states),
         "entities": entities,
     }
 
 
-def _build_helper_summary(config_dir: Path, registry_context: dict[str, Any]) -> dict[str, Any]:
+def _build_helper_summary(
+    config_dir: Path,
+    registry_context: dict[str, Any],
+    live_entity_states: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
     helper_details = _load_helper_definitions(config_dir)
     devices_by_id = registry_context["devices_by_id"]
     areas_by_id = registry_context["areas_by_id"]
@@ -723,6 +848,8 @@ def _build_helper_summary(config_dir: Path, registry_context: dict[str, Any]) ->
 
         by_domain[domain] = by_domain.get(domain, 0) + 1
         details = helper_details.get(entity_id, {})
+    live_state = live_entity_states.get(entity_id, {})
+    live_attributes = live_state.get("current_attributes", {})
         device = devices_by_id.get(str(entity.get("device_id")))
         area = areas_by_id.get(str(entity.get("area_id")))
         if area is None and device is not None:
@@ -740,7 +867,12 @@ def _build_helper_summary(config_dir: Path, registry_context: dict[str, Any]) ->
                 {
                     "entity_id": entity_id,
                     "domain": domain,
-                    "name": _first_non_empty(entity.get("name"), entity.get("original_name"), details.get("name")),
+                    "name": _first_non_empty(
+                        entity.get("name"),
+                        entity.get("original_name"),
+                        details.get("name"),
+                        live_attributes.get("friendly_name") if isinstance(live_attributes, dict) else None,
+                    ),
                     "area": _first_non_empty(area.get("name") if area else None, area.get("area_id") if area else None),
                     "device": _first_non_empty(
                         device.get("name_by_user") if device else None,
@@ -750,6 +882,7 @@ def _build_helper_summary(config_dir: Path, registry_context: dict[str, Any]) ->
                         config_entry.get("domain") if config_entry else None,
                         entity.get("platform"),
                     ),
+                    **live_state,
                     **details,
                 }
             )
