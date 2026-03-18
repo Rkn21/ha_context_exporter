@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time, timedelta
 import json
 import os
 from pathlib import Path
@@ -530,11 +530,11 @@ def _build_live_state_snapshot(state: State) -> dict[str, Any]:
     attributes = dict(state.attributes)
     return _compact_dict(
         {
-            "current_value": state.state,
-            "current_attributes": _compact_dict(attributes),
+            "current_value": _make_json_compatible(state.state),
+            "current_attributes": _make_json_compatible(_compact_dict(attributes)),
             "available_parameters": sorted(attributes),
-            "available_options": _extract_available_options(attributes),
-            "parameter_details": _extract_parameter_details(attributes),
+            "available_options": _make_json_compatible(_extract_available_options(attributes)),
+            "parameter_details": _make_json_compatible(_extract_parameter_details(attributes)),
             "last_changed": state.last_changed.isoformat(),
             "last_updated": state.last_updated.isoformat(),
         }
@@ -558,6 +558,22 @@ def _extract_parameter_details(attributes: Mapping[str, Any]) -> dict[str, Any]:
             if key in attributes
         }
     )
+
+
+def _make_json_compatible(value: Any) -> Any:
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, datetime | date | time):
+        return value.isoformat()
+    if isinstance(value, timedelta):
+        return value.total_seconds()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {str(key): _make_json_compatible(item) for key, item in value.items()}
+    if isinstance(value, list | tuple | set):
+        return [_make_json_compatible(item) for item in value]
+    return str(value)
 
 
 def _build_summary(
