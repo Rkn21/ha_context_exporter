@@ -641,6 +641,7 @@ def _build_summary(
         "excluded_by_category": _summarize_exclusions(excluded),
         "selected_options": asdict(options),
         "generated_files": [
+            "file_index.json",
             "export_summary.json",
             "README_EXPORT.txt",
             "helpers_summary.json",
@@ -648,6 +649,7 @@ def _build_summary(
             "automation_summary.json",
         ],
         "recommended_upload_files": [
+            "file_index.json",
             "export_summary.json",
             "helpers_summary.json",
             "entity_snapshot.json",
@@ -666,6 +668,39 @@ def _build_summary(
         }
         summary["generated_files"].append("custom_components_summary.json")
     return summary
+
+
+def _build_archive_index(
+    prepared_files: list[_PreparedFile],
+    summary: dict[str, Any],
+    excluded: list[dict[str, str]],
+) -> dict[str, Any]:
+    generated_files = list(summary.get("generated_files", []))
+    excluded_file = "excluded_items.json"
+    archive_entries = sorted(
+        generated_files
+        + [excluded_file]
+        + [prepared.archive_name for prepared in prepared_files]
+    )
+    return {
+        "format": "ha_context_exporter_file_index/v1",
+        "generated_at": summary.get("generated_at"),
+        "profile": summary.get("profile"),
+        "entrypoints": {
+            "primary": "file_index.json",
+            "summary": "export_summary.json",
+            "readme": "README_EXPORT.txt",
+        },
+        "counts": {
+            "archive_entries": len(archive_entries),
+            "generated_files": len(generated_files) + 1,
+            "included_files": len(prepared_files),
+            "excluded_items": len(excluded),
+        },
+        "generated_files": generated_files + [excluded_file],
+        "included_files": [prepared.archive_name for prepared in prepared_files],
+        "archive_entries": archive_entries,
+    }
 
 
 def _build_generated_files(
@@ -694,8 +729,10 @@ def _build_generated_files(
         automation_summary,
         custom_components_summary,
     )
+    archive_index = _build_archive_index(prepared_files, summary, excluded)
 
     generated = {
+        "file_index.json": _dump_json_payload(archive_index, sort_keys=True),
         "export_summary.json": _dump_json_payload(_redact_object(summary, options)),
         "README_EXPORT.txt": _build_readme(summary),
         "helpers_summary.json": _dump_json_payload(_redact_object(helper_summary, options)),
@@ -715,6 +752,8 @@ def _build_readme(summary: dict[str, Any]) -> str:
         "HA Context Export\n"
         "=================\n\n"
         "This archive is designed to be uploaded to an AI assistant for Home Assistant context analysis.\n\n"
+        "Open `file_index.json` first for a machine-readable list of archive entries and suggested entry points.\n"
+        "Then use `export_summary.json` for the high-level overview.\n\n"
         f"Profile: {summary.get('profile')}\n"
         f"Entities: {counts.get('entities', 0)}\n"
         f"Devices: {counts.get('devices', 0)}\n"

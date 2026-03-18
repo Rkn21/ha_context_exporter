@@ -16,6 +16,7 @@ Custom integration for Home Assistant, installable through HACS, that builds a *
 - Writes the ZIP inside your Home Assistant `/config` directory
 - Optional public download path when exporting inside `/config/www/...`
 - Built-in summary files with counts plus helper definitions, entity snapshots, live values at export time, automation summaries, and custom component metadata
+- Adds a root-level `file_index.json` so external tools can discover the archive structure without unpack heuristics
 
 ## What gets exported
 
@@ -35,6 +36,7 @@ Depending on options:
   - `core.area_registry`
   - `core.config_entries`
 - generated summaries:
+  - `file_index.json`
   - `export_summary.json`
   - `helpers_summary.json`
   - `entity_snapshot.json`
