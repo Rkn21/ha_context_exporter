@@ -6,6 +6,7 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
+from homeassistant.core import callback
 
 from .const import (
     CONF_CREATE_NOTIFICATION,
@@ -50,6 +51,7 @@ class HAContextExporterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(step_id="user", data_schema=_build_user_schema({CONF_NAME: "Default"}))
 
     @staticmethod
+    @callback
     def async_get_options_flow(config_entry):
         return HAContextExporterOptionsFlow(config_entry)
 

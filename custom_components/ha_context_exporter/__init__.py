@@ -1,14 +1,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import voluptuous as vol
-
-from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
-from homeassistant.exceptions import ServiceValidationError
-from homeassistant.helpers import config_validation as cv
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
 
 from .const import (
     CONF_CONFIG_ENTRY_ID,
@@ -33,40 +29,49 @@ from .const import (
     PLATFORMS,
     SERVICE_EXPORT_CONTEXT,
 )
-from .http import HAContextExporterDownloadView
-from .runtime import async_execute_export, get_runtime_data
+
+if TYPE_CHECKING:
+    from homeassistant.core import ServiceCall
 
 _LOGGER = logging.getLogger(__name__)
-
-EXPORT_SERVICE_SCHEMA = vol.Schema(
-    {
-        vol.Optional(CONF_CONFIG_ENTRY_ID): cv.string,
-        vol.Optional(CONF_EXPORT_PROFILE): vol.In(EXPORT_PROFILES),
-        vol.Optional(CONF_OUTPUT_DIR): cv.string,
-        vol.Optional(CONF_FILENAME_PREFIX): cv.string,
-        vol.Optional(CONF_INCLUDE_PACKAGES): cv.boolean,
-        vol.Optional(CONF_INCLUDE_TEMPLATES): cv.boolean,
-        vol.Optional(CONF_INCLUDE_BLUEPRINTS): cv.boolean,
-        vol.Optional(CONF_INCLUDE_DASHBOARDS): cv.boolean,
-        vol.Optional(CONF_INCLUDE_STORAGE): cv.boolean,
-        vol.Optional(CONF_INCLUDE_CUSTOM_COMPONENTS): cv.boolean,
-        vol.Optional(CONF_INCLUDE_LOGS): cv.boolean,
-        vol.Optional(CONF_INCLUDE_SUMMARY): cv.boolean,
-        vol.Optional(CONF_REDACT_NETWORK): cv.boolean,
-        vol.Optional(CONF_REDACT_URLS): cv.boolean,
-        vol.Optional(CONF_REDACT_LOCATION): cv.boolean,
-        vol.Optional(CONF_PRIVACY_STRICT): cv.boolean,
-        vol.Optional(CONF_CREATE_NOTIFICATION): cv.boolean,
-    }
-)
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     """Set up the integration domain and register services."""
+    import voluptuous as vol
+
+    from homeassistant.core import SupportsResponse
+    from homeassistant.helpers import config_validation as cv
+
+    from .http import HAContextExporterDownloadView
+    from .runtime import async_execute_export
+
     hass.data.setdefault(DOMAIN, {})
     hass.http.register_view(HAContextExporterDownloadView(hass))
 
-    async def async_handle_export_context(call: ServiceCall) -> ServiceResponse:
+    export_service_schema = vol.Schema(
+        {
+            vol.Optional(CONF_CONFIG_ENTRY_ID): cv.string,
+            vol.Optional(CONF_EXPORT_PROFILE): vol.In(EXPORT_PROFILES),
+            vol.Optional(CONF_OUTPUT_DIR): cv.string,
+            vol.Optional(CONF_FILENAME_PREFIX): cv.string,
+            vol.Optional(CONF_INCLUDE_PACKAGES): cv.boolean,
+            vol.Optional(CONF_INCLUDE_TEMPLATES): cv.boolean,
+            vol.Optional(CONF_INCLUDE_BLUEPRINTS): cv.boolean,
+            vol.Optional(CONF_INCLUDE_DASHBOARDS): cv.boolean,
+            vol.Optional(CONF_INCLUDE_STORAGE): cv.boolean,
+            vol.Optional(CONF_INCLUDE_CUSTOM_COMPONENTS): cv.boolean,
+            vol.Optional(CONF_INCLUDE_LOGS): cv.boolean,
+            vol.Optional(CONF_INCLUDE_SUMMARY): cv.boolean,
+            vol.Optional(CONF_REDACT_NETWORK): cv.boolean,
+            vol.Optional(CONF_REDACT_URLS): cv.boolean,
+            vol.Optional(CONF_REDACT_LOCATION): cv.boolean,
+            vol.Optional(CONF_PRIVACY_STRICT): cv.boolean,
+            vol.Optional(CONF_CREATE_NOTIFICATION): cv.boolean,
+        }
+    )
+
+    async def async_handle_export_context(call: ServiceCall) -> dict[str, Any] | None:
         entry = _resolve_entry(hass, call.data.get(CONF_CONFIG_ENTRY_ID))
         result = await async_execute_export(hass, entry, call.data)
         return result if call.return_response else None
@@ -76,7 +81,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             DOMAIN,
             SERVICE_EXPORT_CONTEXT,
             async_handle_export_context,
-            schema=EXPORT_SERVICE_SCHEMA,
+            schema=export_service_schema,
             supports_response=SupportsResponse.OPTIONAL,
         )
 
@@ -85,6 +90,8 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up a config entry."""
+    from .runtime import get_runtime_data
+
     hass.data.setdefault(DOMAIN, {})
     get_runtime_data(hass, entry.entry_id)
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
@@ -106,6 +113,9 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 def _resolve_entry(hass: HomeAssistant, config_entry_id: str | None) -> ConfigEntry:
+    from homeassistant.config_entries import ConfigEntryState
+    from homeassistant.exceptions import ServiceValidationError
+
     if config_entry_id:
         entry = hass.config_entries.async_get_entry(config_entry_id)
         if entry is None or entry.domain != DOMAIN:
