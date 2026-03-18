@@ -848,8 +848,8 @@ def _build_helper_summary(
 
         by_domain[domain] = by_domain.get(domain, 0) + 1
         details = helper_details.get(entity_id, {})
-    live_state = live_entity_states.get(entity_id, {})
-    live_attributes = live_state.get("current_attributes", {})
+        live_state = live_entity_states.get(entity_id, {})
+        live_attributes = live_state.get("current_attributes", {})
         device = devices_by_id.get(str(entity.get("device_id")))
         area = areas_by_id.get(str(entity.get("area_id")))
         if area is None and device is not None:
