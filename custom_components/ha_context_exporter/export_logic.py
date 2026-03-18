@@ -390,8 +390,7 @@ def _sanitize_json_text(raw: str, options: ExportOptions) -> str:
         data = json.loads(raw)
     except json.JSONDecodeError:
         return _sanitize_text(raw, options)
-    redacted = _redact_object(data, options)
-    return json.dumps(redacted, indent=2, ensure_ascii=False, sort_keys=True)
+    return _dump_json_payload(_redact_object(data, options), sort_keys=True)
 
 
 def _redact_object(value: Any, options: ExportOptions, parent_key: str | None = None) -> Any:
@@ -576,6 +575,15 @@ def _make_json_compatible(value: Any) -> Any:
     return str(value)
 
 
+def _dump_json_payload(payload: Any, *, sort_keys: bool = False) -> str:
+    return json.dumps(
+        _make_json_compatible(payload),
+        indent=2,
+        ensure_ascii=False,
+        sort_keys=sort_keys,
+    )
+
+
 def _build_summary(
     config_dir: Path,
     options: ExportOptions,
@@ -688,29 +696,15 @@ def _build_generated_files(
     )
 
     generated = {
-        "export_summary.json": json.dumps(_redact_object(summary, options), indent=2, ensure_ascii=False),
+        "export_summary.json": _dump_json_payload(_redact_object(summary, options)),
         "README_EXPORT.txt": _build_readme(summary),
-        "helpers_summary.json": json.dumps(
-            _redact_object(helper_summary, options),
-            indent=2,
-            ensure_ascii=False,
-        ),
-        "entity_snapshot.json": json.dumps(
-            _redact_object(entity_snapshot, options),
-            indent=2,
-            ensure_ascii=False,
-        ),
-        "automation_summary.json": json.dumps(
-            _redact_object(automation_summary, options),
-            indent=2,
-            ensure_ascii=False,
-        ),
+        "helpers_summary.json": _dump_json_payload(_redact_object(helper_summary, options)),
+        "entity_snapshot.json": _dump_json_payload(_redact_object(entity_snapshot, options)),
+        "automation_summary.json": _dump_json_payload(_redact_object(automation_summary, options)),
     }
     if custom_components_summary is not None:
-        generated["custom_components_summary.json"] = json.dumps(
-            _redact_object(custom_components_summary, options),
-            indent=2,
-            ensure_ascii=False,
+        generated["custom_components_summary.json"] = _dump_json_payload(
+            _redact_object(custom_components_summary, options)
         )
     return generated
 
